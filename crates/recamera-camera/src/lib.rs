@@ -1,11 +1,12 @@
 //! Camera capture for the recamera SDK.
 //!
-//! This crate wraps the CVI MPI video pipeline (Sensor → VI → ISP → VPSS →
+//! This crate wraps the CVI MPI video pipeline (Sensor -> VI -> ISP -> VPSS ->
 //! VENC) and exposes a safe Rust API for configuring the camera, starting and
 //! stopping video streams, and capturing individual frames.
 //!
-//! On non-riscv64 hosts, all hardware operations return an error so that the
-//! rest of the SDK can still compile and be tested.
+//! All hardware operations currently return an error because the CVI MPI FFI
+//! bindings have not yet been generated. Once bindings are available the
+//! implementation will initialise the pipeline and capture real frames.
 
 use recamera_core::{Error, FrameData, ImageFormat, Resolution, Result};
 
@@ -25,10 +26,10 @@ pub enum Channel {
 /// Configuration for the camera pipeline.
 ///
 /// Use the [`Default`] implementation for a sensible starting point
-/// (1920×1080, 30 fps, JPEG channel).
+/// (1920x1080, 30 fps, JPEG channel).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CameraConfig {
-    /// Capture resolution (width × height in pixels).
+    /// Capture resolution (width x height in pixels).
     pub resolution: Resolution,
     /// Target frame rate in frames per second.
     pub fps: u32,
@@ -83,7 +84,11 @@ impl Frame {
     }
 }
 
-/// Camera handle for capturing frames from the CVI video pipeline.
+/// Camera handle that wraps the CVI MPI video pipeline.
+///
+/// This struct will manage the full Sensor -> VI -> ISP -> VPSS -> VENC
+/// pipeline once the CVI MPI FFI bindings are generated. Until then, all
+/// hardware operations return an error.
 ///
 /// Create one with [`Camera::new`], then call [`Camera::start_stream`] before
 /// capturing frames with [`Camera::capture`].
@@ -98,59 +103,20 @@ pub struct Camera {
 impl Camera {
     /// Create a new camera handle with the given configuration.
     ///
-    /// On non-riscv64 platforms this always returns an error because the
-    /// camera hardware is not available.
-    #[cfg(not(target_arch = "riscv64"))]
+    /// Currently returns an error unconditionally because the CVI MPI FFI
+    /// bindings have not yet been generated.
     pub fn new(_config: CameraConfig) -> Result<Self> {
         Err(Error::Camera(
-            "camera hardware not available on this platform".into(),
-        ))
-    }
-
-    /// Create a new camera handle with the given configuration.
-    ///
-    /// Initialises the CVI MPI sensor, VI, ISP, and VPSS subsystems.
-    #[cfg(target_arch = "riscv64")]
-    pub fn new(config: CameraConfig) -> Result<Self> {
-        // TODO: Initialise sensor via CVI_MIPI_SetSensorXXX
-        // TODO: CVI_SYS_Init / CVI_VB_Init
-        // TODO: CVI_VI_SetDevAttr / CVI_VI_EnableDev / CVI_VI_CreatePipe / CVI_VI_StartPipe
-        // TODO: CVI_ISP_Init / CVI_ISP_Run (in a thread)
-        // TODO: CVI_VPSS_CreateGrp / CVI_VPSS_SetChnAttr / CVI_VPSS_EnableChn / CVI_VPSS_StartGrp
-        Ok(Self {
-            config,
-            streaming: false,
-        })
-    }
-
-    /// Start the video stream.
-    ///
-    /// After this call, [`Camera::capture`] can be used to retrieve frames.
-    #[cfg(not(target_arch = "riscv64"))]
-    pub fn start_stream(&mut self) -> Result<()> {
-        Err(Error::Camera(
-            "camera hardware not available on this platform".into(),
+            "not yet implemented: requires CVI MPI bindings".into(),
         ))
     }
 
     /// Start the video stream.
     ///
     /// After this call, [`Camera::capture`] can be used to retrieve frames.
-    #[cfg(target_arch = "riscv64")]
     pub fn start_stream(&mut self) -> Result<()> {
-        // TODO: CVI_VENC_CreateChn / CVI_VENC_StartRecvFrame (for Jpeg/H264 channels)
-        self.streaming = true;
-        Ok(())
-    }
-
-    /// Stop the video stream.
-    ///
-    /// After this call, [`Camera::capture`] will return an error until
-    /// [`Camera::start_stream`] is called again.
-    #[cfg(not(target_arch = "riscv64"))]
-    pub fn stop_stream(&mut self) -> Result<()> {
         Err(Error::Camera(
-            "camera hardware not available on this platform".into(),
+            "not yet implemented: requires CVI MPI bindings".into(),
         ))
     }
 
@@ -158,34 +124,19 @@ impl Camera {
     ///
     /// After this call, [`Camera::capture`] will return an error until
     /// [`Camera::start_stream`] is called again.
-    #[cfg(target_arch = "riscv64")]
     pub fn stop_stream(&mut self) -> Result<()> {
-        // TODO: CVI_VENC_StopRecvFrame / CVI_VENC_DestroyChn
-        self.streaming = false;
-        Ok(())
-    }
-
-    /// Capture a single frame from the active stream.
-    ///
-    /// Returns an error if the camera is not currently streaming.
-    #[cfg(not(target_arch = "riscv64"))]
-    pub fn capture(&self) -> Result<Frame> {
         Err(Error::Camera(
-            "camera hardware not available on this platform".into(),
+            "not yet implemented: requires CVI MPI bindings".into(),
         ))
     }
 
     /// Capture a single frame from the active stream.
     ///
     /// Returns an error if the camera is not currently streaming.
-    #[cfg(target_arch = "riscv64")]
     pub fn capture(&self) -> Result<Frame> {
-        if !self.streaming {
-            return Err(Error::Camera("camera is not streaming".into()));
-        }
-        // TODO: CVI_VPSS_GetChnFrame / CVI_VENC_SendFrame / CVI_VENC_GetStream
-        // TODO: Build FrameData from the raw buffer returned by MPI
-        todo!("capture not yet implemented — requires CVI MPI sysroot")
+        Err(Error::Camera(
+            "not yet implemented: requires CVI MPI bindings".into(),
+        ))
     }
 
     /// Returns a reference to the current camera configuration.
@@ -230,13 +181,14 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_arch = "riscv64"))]
-    fn camera_new_fails_on_non_riscv64() {
+    fn camera_new_returns_not_yet_implemented() {
         let result = Camera::new(CameraConfig::default());
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("camera hardware not available on this platform"));
+        assert!(
+            err.to_string()
+                .contains("not yet implemented: requires CVI MPI bindings"),
+            "unexpected error message: {err}"
+        );
     }
 }

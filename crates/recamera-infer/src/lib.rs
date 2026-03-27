@@ -5,11 +5,9 @@
 //! does **not** handle ONNX-to-cvimodel conversion; that must be done separately
 //! before deploying to the device.
 //!
-//! # Platform support
-//!
-//! Inference only runs on `riscv64` targets (the SG2002 NPU). On other
-//! architectures, [`Engine::new`] returns an error so the crate can still be
-//! compiled and tested on a development host.
+//! All hardware operations currently return an error because the CVI runtime
+//! FFI bindings have not yet been generated. Once bindings are available the
+//! implementation will initialise the NPU and run real inference.
 
 use std::path::{Path, PathBuf};
 
@@ -89,6 +87,7 @@ pub enum Output {
 ///
 /// Use [`Engine::new`] to create an instance, then [`Engine::load_model`] to
 /// load a `.cvimodel` file for inference.
+#[derive(Debug)]
 pub struct Engine {
     _private: (),
 }
@@ -96,24 +95,19 @@ pub struct Engine {
 impl Engine {
     /// Initialise the CVI NPU runtime.
     ///
-    /// On non-`riscv64` hosts this always returns [`Error::Inference`] because
-    /// the hardware NPU is not available.
+    /// Currently returns an error unconditionally because the CVI runtime FFI
+    /// bindings have not yet been generated.
     pub fn new() -> Result<Self> {
-        if cfg!(target_arch = "riscv64") {
-            // TODO: call into recamera-cvi-sys to initialise the runtime.
-            Ok(Self { _private: () })
-        } else {
-            Err(Error::Inference(
-                "CVI NPU runtime is only available on riscv64".into(),
-            ))
-        }
+        Err(Error::Inference(
+            "not yet implemented: requires CVI runtime bindings".into(),
+        ))
     }
 
     /// Load a `.cvimodel` file and prepare it for inference.
     ///
-    /// Returns [`Error::Inference`] if the path does not have a
-    /// `.cvimodel` extension, or [`Error::Io`] if the file does not exist.
-    /// On non-`riscv64` hosts, returns [`Error::Inference`].
+    /// Returns [`Error::Inference`] if the path does not have a `.cvimodel`
+    /// extension. After validation, returns the "not yet implemented" error
+    /// because the CVI runtime FFI bindings have not yet been generated.
     pub fn load_model(&self, path: &Path) -> Result<Model> {
         // Validate extension.
         match path.extension().and_then(|e| e.to_str()) {
@@ -126,28 +120,9 @@ impl Engine {
             }
         }
 
-        // Validate file exists.
-        if !path.exists() {
-            return Err(Error::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("model file not found: {}", path.display()),
-            )));
-        }
-
-        if cfg!(target_arch = "riscv64") {
-            // TODO: call into recamera-cvi-sys to load the model.
-            Ok(Model {
-                info: ModelInfo {
-                    path: path.to_path_buf(),
-                    input_shape: TensorShape::new(vec![1, 3, 640, 640]),
-                    output_shapes: vec![TensorShape::new(vec![1, 25200, 85])],
-                },
-            })
-        } else {
-            Err(Error::Inference(
-                "CVI NPU runtime is only available on riscv64".into(),
-            ))
-        }
+        Err(Error::Inference(
+            "not yet implemented: requires CVI runtime bindings".into(),
+        ))
     }
 }
 
@@ -161,23 +136,18 @@ pub struct Model {
 impl Model {
     /// Run inference on a single frame.
     ///
-    /// On non-`riscv64` hosts this always returns [`Error::Inference`].
+    /// Currently returns an error unconditionally because the CVI runtime FFI
+    /// bindings have not yet been generated.
     pub fn run(&self, _input: &FrameData) -> Result<Output> {
-        if cfg!(target_arch = "riscv64") {
-            // TODO: call into recamera-cvi-sys to run inference.
-            Ok(Output::Raw(vec![]))
-        } else {
-            Err(Error::Inference(
-                "CVI NPU runtime is only available on riscv64".into(),
-            ))
-        }
+        Err(Error::Inference(
+            "not yet implemented: requires CVI runtime bindings".into(),
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write as _;
 
     #[test]
     fn tensor_shape_total_elements() {
@@ -222,19 +192,19 @@ mod tests {
     }
 
     #[test]
-    fn engine_new_fails_on_non_riscv64() {
-        // This test runs on the development host (x86_64 / aarch64), so it
-        // must fail.
+    fn engine_new_returns_not_yet_implemented() {
         let result = Engine::new();
         assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("not yet implemented: requires CVI runtime bindings"),
+            "unexpected error message: {err}"
+        );
     }
 
     #[test]
     fn extension_validation_rejects_wrong_extension() {
-        // We need an Engine instance to call load_model, but Engine::new fails
-        // on non-riscv64, so we test via a helper that mimics the validation.
-        // Instead, construct Engine directly (field is private but we're in the
-        // same crate).
         let engine = Engine { _private: () };
         let result = engine.load_model(Path::new("/tmp/model.onnx"));
         assert!(result.is_err());
@@ -248,21 +218,19 @@ mod tests {
     }
 
     #[test]
-    fn extension_validation_accepts_cvimodel() {
+    fn extension_validation_passes_then_returns_not_implemented() {
         let engine = Engine { _private: () };
-        // Create a real .cvimodel file so the exists() check passes.
-        let dir = tempfile::tempdir().unwrap();
-        let model_path = dir.path().join("test.cvimodel");
-        {
-            let mut f = std::fs::File::create(&model_path).unwrap();
-            f.write_all(b"fake").unwrap();
-        }
-        let result = engine.load_model(&model_path);
-        // On non-riscv64, this should fail with Inference (not InvalidArgument).
-        match result {
-            Err(Error::Inference(_)) => {} // expected on dev host
-            Ok(_) => {}                    // would be fine on riscv64
-            Err(e) => panic!("unexpected error: {e}"),
+        let result = engine.load_model(Path::new("/tmp/test.cvimodel"));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        match err {
+            Error::Inference(msg) => {
+                assert!(
+                    msg.contains("not yet implemented"),
+                    "unexpected message: {msg}"
+                );
+            }
+            _ => panic!("expected Inference, got: {err}"),
         }
     }
 }
