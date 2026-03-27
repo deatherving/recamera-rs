@@ -2,6 +2,12 @@
 resolver = "2"
 members = [
     "crates/recamera-core",
+    "crates/recamera-logging",
+    "crates/recamera-config",
+    "crates/recamera-storage",
+    "crates/recamera-uart",
+    "crates/recamera-rs485",
+    "crates/recamera-system",
 ]
 
 [workspace.package]

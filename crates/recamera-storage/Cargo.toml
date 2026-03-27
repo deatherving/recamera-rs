@@ -1,0 +1,14 @@
+[package]
+name = "recamera-storage"
+description = "Storage utilities for the recamera SDK"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+recamera-core = { path = "../recamera-core" }
+
+[dev-dependencies]
+tempfile = "3"

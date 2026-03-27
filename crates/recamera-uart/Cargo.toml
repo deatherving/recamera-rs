@@ -1,0 +1,12 @@
+[package]
+name = "recamera-uart"
+description = "UART / serial communication for the recamera SDK"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+recamera-core = { path = "../recamera-core" }
+serialport = "4"
