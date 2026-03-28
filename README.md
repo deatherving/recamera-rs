@@ -72,8 +72,6 @@ Add this SDK as a dependency in your own project. No SDK download required -- th
 recamera = { git = "https://github.com/anthropics/recamera-rs", features = ["camera", "uart"] }
 ```
 
-When cross-compiling your application for the reCamera target (`riscv64gc-unknown-linux-musl`), the linker needs the vendor `.so` files at build time. Download the reCamera-OS SDK from [reCamera-OS releases](https://github.com/Seeed-Studio/reCamera-OS/releases) (look for `*_sdk.tar.gz`) and set `SG200X_SDK_PATH` to the extracted path. The `build.rs` script finds the libraries at `$SG200X_SDK_PATH/cvi_mpi/lib/` automatically.
-
 ### For SDK maintainers
 
 To regenerate FFI bindings, see `scripts/generate-bindings.sh`.
