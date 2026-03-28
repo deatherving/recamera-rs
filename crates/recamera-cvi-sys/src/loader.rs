@@ -1,0 +1,583 @@
+#![allow(unsafe_op_in_unsafe_fn)]
+//! Runtime dynamic loader for CVI vendor shared libraries.
+//!
+//! Instead of linking against the vendor `.so` files at compile time (which
+//! requires the SDK to be present on the build host), this module loads them
+//! at runtime via `dlopen` using the [`libloading`] crate. This means
+//! `cargo build` works on any machine, and the actual libraries are only
+//! needed when the code runs on a reCamera device.
+
+use libloading::Library;
+use std::path::Path;
+
+use crate::bindings::*;
+
+/// Search paths tried when loading vendor libraries.
+///
+/// These are the standard locations where CVI shared objects are installed
+/// on reCamera-OS.
+const LIB_SEARCH_PATHS: &[&str] = &["/usr/lib/", "/lib/", "/mnt/system/lib/"];
+
+/// Holds loaded CVI vendor library handles.
+///
+/// Each field corresponds to one of the five vendor shared libraries required
+/// by the CVI multimedia pipeline. The libraries are loaded once via
+/// [`CviLibs::load`] and remain mapped for the lifetime of this struct.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use recamera_cvi_sys::CviLibs;
+///
+/// let libs = CviLibs::load().expect("failed to load CVI libraries");
+/// unsafe {
+///     let rc = libs.cvi_sys_init().expect("symbol lookup failed");
+///     assert_eq!(rc, 0); // CVI_SUCCESS
+/// }
+/// ```
+pub struct CviLibs {
+    /// Handle to `libsys.so` (SYS and VB functions).
+    sys: Library,
+    /// Handle to `libvi.so` (video input functions).
+    vi: Library,
+    /// Handle to `libvpss.so` (video processing subsystem functions).
+    vpss: Library,
+    /// Handle to `libvenc.so` (video encoding functions).
+    venc: Library,
+    /// Handle to `libcviruntime.so` (NPU inference runtime).
+    #[allow(dead_code)]
+    cviruntime: Library,
+}
+
+/// Try to load a shared library by name, searching [`LIB_SEARCH_PATHS`].
+///
+/// Returns the first successfully loaded library, or the error from the
+/// last attempted path.
+fn load_library(name: &str) -> Result<Library, libloading::Error> {
+    let mut last_err = None;
+    for dir in LIB_SEARCH_PATHS {
+        let path = Path::new(dir).join(name);
+        match unsafe { Library::new(&path) } {
+            Ok(lib) => return Ok(lib),
+            Err(e) => last_err = Some(e),
+        }
+    }
+    // If none of the paths worked, try the bare name and let the dynamic
+    // linker resolve it via LD_LIBRARY_PATH / system defaults.
+    unsafe { Library::new(name) }.map_err(|e| last_err.unwrap_or(e))
+}
+
+impl CviLibs {
+    /// Load all five CVI vendor libraries from the standard search paths.
+    ///
+    /// The libraries are searched in order: `/usr/lib/`, `/lib/`,
+    /// `/mnt/system/lib/`. If none of those contain the library, the
+    /// system's default dynamic linker search is used as a fallback.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`libloading::Error`] if any of the five libraries cannot
+    /// be found or loaded.
+    pub fn load() -> Result<Self, libloading::Error> {
+        Ok(Self {
+            sys: load_library("libsys.so")?,
+            vi: load_library("libvi.so")?,
+            vpss: load_library("libvpss.so")?,
+            venc: load_library("libvenc.so")?,
+            cviruntime: load_library("libcviruntime.so")?,
+        })
+    }
+
+    // ---------------------------------------------------------------
+    // SYS functions (from libsys.so)
+    // ---------------------------------------------------------------
+
+    /// Initialize the CVI system. Must be called before any other CVI API.
+    ///
+    /// # Safety
+    ///
+    /// Calls into a C shared library via `dlsym`. The caller must ensure the
+    /// library is compatible with the running kernel and hardware.
+    pub unsafe fn cvi_sys_init(&self) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn() -> CVI_S32> =
+            self.sys.get(b"CVI_SYS_Init")?;
+        Ok(func())
+    }
+
+    /// Shut down the CVI system.
+    ///
+    /// # Safety
+    ///
+    /// See [`CviLibs::cvi_sys_init`].
+    pub unsafe fn cvi_sys_exit(&self) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn() -> CVI_S32> =
+            self.sys.get(b"CVI_SYS_Exit")?;
+        Ok(func())
+    }
+
+    /// Bind a source channel to a destination channel.
+    ///
+    /// # Safety
+    ///
+    /// Both pointers must be valid and point to initialized `MMF_CHN_S` structs.
+    pub unsafe fn cvi_sys_bind(
+        &self,
+        src: *const MMF_CHN_S,
+        dst: *const MMF_CHN_S,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<
+            unsafe extern "C" fn(*const MMF_CHN_S, *const MMF_CHN_S) -> CVI_S32,
+        > = self.sys.get(b"CVI_SYS_Bind")?;
+        Ok(func(src, dst))
+    }
+
+    /// Unbind a previously bound source/destination channel pair.
+    ///
+    /// # Safety
+    ///
+    /// Both pointers must be valid and point to initialized `MMF_CHN_S` structs.
+    pub unsafe fn cvi_sys_unbind(
+        &self,
+        src: *const MMF_CHN_S,
+        dst: *const MMF_CHN_S,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<
+            unsafe extern "C" fn(*const MMF_CHN_S, *const MMF_CHN_S) -> CVI_S32,
+        > = self.sys.get(b"CVI_SYS_UnBind")?;
+        Ok(func(src, dst))
+    }
+
+    // ---------------------------------------------------------------
+    // VB functions (from libsys.so)
+    // ---------------------------------------------------------------
+
+    /// Initialize the video buffer pool.
+    ///
+    /// # Safety
+    ///
+    /// Must be called after [`CviLibs::cvi_vb_set_config`] and before
+    /// allocating any video buffers.
+    pub unsafe fn cvi_vb_init(&self) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn() -> CVI_S32> =
+            self.sys.get(b"CVI_VB_Init")?;
+        Ok(func())
+    }
+
+    /// Tear down the video buffer pool.
+    ///
+    /// # Safety
+    ///
+    /// All buffers must have been released before calling this.
+    pub unsafe fn cvi_vb_exit(&self) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn() -> CVI_S32> =
+            self.sys.get(b"CVI_VB_Exit")?;
+        Ok(func())
+    }
+
+    /// Set the common video buffer pool configuration.
+    ///
+    /// # Safety
+    ///
+    /// `config` must point to a valid, initialized `VB_CONFIG_S`.
+    pub unsafe fn cvi_vb_set_config(
+        &self,
+        config: *const VB_CONFIG_S,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(*const VB_CONFIG_S) -> CVI_S32> =
+            self.sys.get(b"CVI_VB_SetConfig")?;
+        Ok(func(config))
+    }
+
+    // ---------------------------------------------------------------
+    // VI functions (from libvi.so)
+    // ---------------------------------------------------------------
+
+    /// Set video input device attributes.
+    ///
+    /// # Safety
+    ///
+    /// `attr` must point to a valid `VI_DEV_ATTR_S`.
+    pub unsafe fn cvi_vi_set_dev_attr(
+        &self,
+        dev: VI_DEV,
+        attr: *const VI_DEV_ATTR_S,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<
+            unsafe extern "C" fn(VI_DEV, *const VI_DEV_ATTR_S) -> CVI_S32,
+        > = self.vi.get(b"CVI_VI_SetDevAttr")?;
+        Ok(func(dev, attr))
+    }
+
+    /// Enable a video input device.
+    ///
+    /// # Safety
+    ///
+    /// The device must have been configured via [`CviLibs::cvi_vi_set_dev_attr`].
+    pub unsafe fn cvi_vi_enable_dev(&self, dev: VI_DEV) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(VI_DEV) -> CVI_S32> =
+            self.vi.get(b"CVI_VI_EnableDev")?;
+        Ok(func(dev))
+    }
+
+    /// Disable a video input device.
+    ///
+    /// # Safety
+    ///
+    /// The device must have been enabled first.
+    pub unsafe fn cvi_vi_disable_dev(&self, dev: VI_DEV) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(VI_DEV) -> CVI_S32> =
+            self.vi.get(b"CVI_VI_DisableDev")?;
+        Ok(func(dev))
+    }
+
+    /// Set video input channel attributes.
+    ///
+    /// # Safety
+    ///
+    /// `attr` must point to a valid `VI_CHN_ATTR_S`.
+    pub unsafe fn cvi_vi_set_chn_attr(
+        &self,
+        pipe: VI_PIPE,
+        chn: VI_CHN,
+        attr: *mut VI_CHN_ATTR_S,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<
+            unsafe extern "C" fn(VI_PIPE, VI_CHN, *mut VI_CHN_ATTR_S) -> CVI_S32,
+        > = self.vi.get(b"CVI_VI_SetChnAttr")?;
+        Ok(func(pipe, chn, attr))
+    }
+
+    /// Enable a video input channel.
+    ///
+    /// # Safety
+    ///
+    /// The channel must have been configured first.
+    pub unsafe fn cvi_vi_enable_chn(
+        &self,
+        pipe: VI_PIPE,
+        chn: VI_CHN,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(VI_PIPE, VI_CHN) -> CVI_S32> =
+            self.vi.get(b"CVI_VI_EnableChn")?;
+        Ok(func(pipe, chn))
+    }
+
+    /// Disable a video input channel.
+    ///
+    /// # Safety
+    ///
+    /// The channel must have been enabled first.
+    pub unsafe fn cvi_vi_disable_chn(
+        &self,
+        pipe: VI_PIPE,
+        chn: VI_CHN,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(VI_PIPE, VI_CHN) -> CVI_S32> =
+            self.vi.get(b"CVI_VI_DisableChn")?;
+        Ok(func(pipe, chn))
+    }
+
+    /// Get a frame from a video input channel.
+    ///
+    /// # Safety
+    ///
+    /// `frame_info` must point to a valid `VIDEO_FRAME_INFO_S` that will be
+    /// written to. The returned frame must later be released with
+    /// [`CviLibs::cvi_vi_release_chn_frame`].
+    pub unsafe fn cvi_vi_get_chn_frame(
+        &self,
+        pipe: VI_PIPE,
+        chn: VI_CHN,
+        frame_info: *mut VIDEO_FRAME_INFO_S,
+        timeout_ms: CVI_S32,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<
+            unsafe extern "C" fn(VI_PIPE, VI_CHN, *mut VIDEO_FRAME_INFO_S, CVI_S32) -> CVI_S32,
+        > = self.vi.get(b"CVI_VI_GetChnFrame")?;
+        Ok(func(pipe, chn, frame_info, timeout_ms))
+    }
+
+    /// Release a frame previously obtained from a video input channel.
+    ///
+    /// # Safety
+    ///
+    /// `frame_info` must point to a frame obtained from
+    /// [`CviLibs::cvi_vi_get_chn_frame`].
+    pub unsafe fn cvi_vi_release_chn_frame(
+        &self,
+        pipe: VI_PIPE,
+        chn: VI_CHN,
+        frame_info: *const VIDEO_FRAME_INFO_S,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<
+            unsafe extern "C" fn(VI_PIPE, VI_CHN, *const VIDEO_FRAME_INFO_S) -> CVI_S32,
+        > = self.vi.get(b"CVI_VI_ReleaseChnFrame")?;
+        Ok(func(pipe, chn, frame_info))
+    }
+
+    // ---------------------------------------------------------------
+    // VPSS functions (from libvpss.so)
+    // ---------------------------------------------------------------
+
+    /// Create a VPSS processing group.
+    ///
+    /// # Safety
+    ///
+    /// `attr` must point to a valid `VPSS_GRP_ATTR_S`.
+    pub unsafe fn cvi_vpss_create_grp(
+        &self,
+        grp: VPSS_GRP,
+        attr: *const VPSS_GRP_ATTR_S,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<
+            unsafe extern "C" fn(VPSS_GRP, *const VPSS_GRP_ATTR_S) -> CVI_S32,
+        > = self.vpss.get(b"CVI_VPSS_CreateGrp")?;
+        Ok(func(grp, attr))
+    }
+
+    /// Destroy a VPSS processing group.
+    ///
+    /// # Safety
+    ///
+    /// The group must have been stopped and all channels disabled first.
+    pub unsafe fn cvi_vpss_destroy_grp(
+        &self,
+        grp: VPSS_GRP,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(VPSS_GRP) -> CVI_S32> =
+            self.vpss.get(b"CVI_VPSS_DestroyGrp")?;
+        Ok(func(grp))
+    }
+
+    /// Start a VPSS processing group.
+    ///
+    /// # Safety
+    ///
+    /// The group must have been created first.
+    pub unsafe fn cvi_vpss_start_grp(
+        &self,
+        grp: VPSS_GRP,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(VPSS_GRP) -> CVI_S32> =
+            self.vpss.get(b"CVI_VPSS_StartGrp")?;
+        Ok(func(grp))
+    }
+
+    /// Stop a VPSS processing group.
+    ///
+    /// # Safety
+    ///
+    /// The group must have been started first.
+    pub unsafe fn cvi_vpss_stop_grp(&self, grp: VPSS_GRP) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(VPSS_GRP) -> CVI_S32> =
+            self.vpss.get(b"CVI_VPSS_StopGrp")?;
+        Ok(func(grp))
+    }
+
+    /// Set VPSS channel attributes.
+    ///
+    /// # Safety
+    ///
+    /// `attr` must point to a valid `VPSS_CHN_ATTR_S`.
+    pub unsafe fn cvi_vpss_set_chn_attr(
+        &self,
+        grp: VPSS_GRP,
+        chn: VPSS_CHN,
+        attr: *const VPSS_CHN_ATTR_S,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<
+            unsafe extern "C" fn(VPSS_GRP, VPSS_CHN, *const VPSS_CHN_ATTR_S) -> CVI_S32,
+        > = self.vpss.get(b"CVI_VPSS_SetChnAttr")?;
+        Ok(func(grp, chn, attr))
+    }
+
+    /// Enable a VPSS channel.
+    ///
+    /// # Safety
+    ///
+    /// The channel must have been configured first.
+    pub unsafe fn cvi_vpss_enable_chn(
+        &self,
+        grp: VPSS_GRP,
+        chn: VPSS_CHN,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(VPSS_GRP, VPSS_CHN) -> CVI_S32> =
+            self.vpss.get(b"CVI_VPSS_EnableChn")?;
+        Ok(func(grp, chn))
+    }
+
+    /// Disable a VPSS channel.
+    ///
+    /// # Safety
+    ///
+    /// The channel must have been enabled first.
+    pub unsafe fn cvi_vpss_disable_chn(
+        &self,
+        grp: VPSS_GRP,
+        chn: VPSS_CHN,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(VPSS_GRP, VPSS_CHN) -> CVI_S32> =
+            self.vpss.get(b"CVI_VPSS_DisableChn")?;
+        Ok(func(grp, chn))
+    }
+
+    /// Get a frame from a VPSS channel.
+    ///
+    /// # Safety
+    ///
+    /// `frame` must point to a valid `VIDEO_FRAME_INFO_S` that will be
+    /// written to. The returned frame must later be released with
+    /// [`CviLibs::cvi_vpss_release_chn_frame`].
+    pub unsafe fn cvi_vpss_get_chn_frame(
+        &self,
+        grp: VPSS_GRP,
+        chn: VPSS_CHN,
+        frame: *mut VIDEO_FRAME_INFO_S,
+        timeout_ms: CVI_S32,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<
+            unsafe extern "C" fn(
+                VPSS_GRP,
+                VPSS_CHN,
+                *mut VIDEO_FRAME_INFO_S,
+                CVI_S32,
+            ) -> CVI_S32,
+        > = self.vpss.get(b"CVI_VPSS_GetChnFrame")?;
+        Ok(func(grp, chn, frame, timeout_ms))
+    }
+
+    /// Release a frame previously obtained from a VPSS channel.
+    ///
+    /// # Safety
+    ///
+    /// `frame` must point to a frame obtained from
+    /// [`CviLibs::cvi_vpss_get_chn_frame`].
+    pub unsafe fn cvi_vpss_release_chn_frame(
+        &self,
+        grp: VPSS_GRP,
+        chn: VPSS_CHN,
+        frame: *const VIDEO_FRAME_INFO_S,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<
+            unsafe extern "C" fn(VPSS_GRP, VPSS_CHN, *const VIDEO_FRAME_INFO_S) -> CVI_S32,
+        > = self.vpss.get(b"CVI_VPSS_ReleaseChnFrame")?;
+        Ok(func(grp, chn, frame))
+    }
+
+    // ---------------------------------------------------------------
+    // VENC functions (from libvenc.so)
+    // ---------------------------------------------------------------
+
+    /// Create a video encoding channel.
+    ///
+    /// # Safety
+    ///
+    /// `attr` must point to a valid `VENC_CHN_ATTR_S`.
+    pub unsafe fn cvi_venc_create_chn(
+        &self,
+        chn: VENC_CHN,
+        attr: *const VENC_CHN_ATTR_S,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<
+            unsafe extern "C" fn(VENC_CHN, *const VENC_CHN_ATTR_S) -> CVI_S32,
+        > = self.venc.get(b"CVI_VENC_CreateChn")?;
+        Ok(func(chn, attr))
+    }
+
+    /// Destroy a video encoding channel.
+    ///
+    /// # Safety
+    ///
+    /// The channel must have been stopped and all streams released first.
+    pub unsafe fn cvi_venc_destroy_chn(
+        &self,
+        chn: VENC_CHN,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(VENC_CHN) -> CVI_S32> =
+            self.venc.get(b"CVI_VENC_DestroyChn")?;
+        Ok(func(chn))
+    }
+
+    /// Start receiving frames on an encoding channel.
+    ///
+    /// # Safety
+    ///
+    /// `param` must point to a valid `VENC_RECV_PIC_PARAM_S`.
+    pub unsafe fn cvi_venc_start_recv_frame(
+        &self,
+        chn: VENC_CHN,
+        param: *const VENC_RECV_PIC_PARAM_S,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<
+            unsafe extern "C" fn(VENC_CHN, *const VENC_RECV_PIC_PARAM_S) -> CVI_S32,
+        > = self.venc.get(b"CVI_VENC_StartRecvFrame")?;
+        Ok(func(chn, param))
+    }
+
+    /// Stop receiving frames on an encoding channel.
+    ///
+    /// # Safety
+    ///
+    /// The channel must have been started first.
+    pub unsafe fn cvi_venc_stop_recv_frame(
+        &self,
+        chn: VENC_CHN,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(VENC_CHN) -> CVI_S32> =
+            self.venc.get(b"CVI_VENC_StopRecvFrame")?;
+        Ok(func(chn))
+    }
+
+    /// Send a frame to a video encoding channel.
+    ///
+    /// # Safety
+    ///
+    /// `frame` must point to a valid `VIDEO_FRAME_INFO_S`.
+    pub unsafe fn cvi_venc_send_frame(
+        &self,
+        chn: VENC_CHN,
+        frame: *const VIDEO_FRAME_INFO_S,
+        timeout_ms: CVI_S32,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<
+            unsafe extern "C" fn(VENC_CHN, *const VIDEO_FRAME_INFO_S, CVI_S32) -> CVI_S32,
+        > = self.venc.get(b"CVI_VENC_SendFrame")?;
+        Ok(func(chn, frame, timeout_ms))
+    }
+
+    /// Get an encoded stream from a video encoding channel.
+    ///
+    /// # Safety
+    ///
+    /// `stream` must point to a valid `VENC_STREAM_S` that will be written to.
+    /// The returned stream must later be released with
+    /// [`CviLibs::cvi_venc_release_stream`].
+    pub unsafe fn cvi_venc_get_stream(
+        &self,
+        chn: VENC_CHN,
+        stream: *mut VENC_STREAM_S,
+        timeout_ms: CVI_S32,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<
+            unsafe extern "C" fn(VENC_CHN, *mut VENC_STREAM_S, CVI_S32) -> CVI_S32,
+        > = self.venc.get(b"CVI_VENC_GetStream")?;
+        Ok(func(chn, stream, timeout_ms))
+    }
+
+    /// Release an encoded stream previously obtained from a VENC channel.
+    ///
+    /// # Safety
+    ///
+    /// `stream` must point to a stream obtained from
+    /// [`CviLibs::cvi_venc_get_stream`].
+    pub unsafe fn cvi_venc_release_stream(
+        &self,
+        chn: VENC_CHN,
+        stream: *mut VENC_STREAM_S,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<
+            unsafe extern "C" fn(VENC_CHN, *mut VENC_STREAM_S) -> CVI_S32,
+        > = self.venc.get(b"CVI_VENC_ReleaseStream")?;
+        Ok(func(chn, stream))
+    }
+}
