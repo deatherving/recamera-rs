@@ -63,22 +63,16 @@ This project is at an early stage. The API is expected to change as the design s
 
 Pre-generated bindings are committed to the repo, so most users don't need to do this. If you need to regenerate them (e.g., for a new SDK version):
 
-1. Download the reCamera-OS SDK from [reCamera-OS releases](https://github.com/Seeed-Studio/reCamera-OS/releases) (look for `*_sdk.tar.gz`):
-   ```sh
-   mkdir -p sdk && cd sdk
-   # Download sg2002_reCamera_*_sdk.tar.gz from the releases page
-   tar xzf sg2002_reCamera_*_sdk.tar.gz
-   cd ..
-   ```
+1. Download the reCamera-OS SDK from [reCamera-OS releases](https://github.com/Seeed-Studio/reCamera-OS/releases) (look for `*_sdk.tar.gz`) and extract it to any location.
 
 2. Install bindgen:
    ```sh
    cargo install bindgen-cli
    ```
 
-3. Run the generation script:
+3. Run the generation script, passing the path to your extracted SDK:
    ```sh
-   SDK_PATH=./sdk/sg2002_recamera_emmc ./scripts/generate-bindings.sh
+   ./scripts/generate-bindings.sh /path/to/sg2002_recamera_emmc
    ```
 
 4. Verify and commit:

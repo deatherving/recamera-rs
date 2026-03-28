@@ -7,11 +7,10 @@
 #      cargo install bindgen-cli
 #   2. Download the reCamera-OS SDK from:
 #      https://github.com/Seeed-Studio/reCamera-OS/releases
-#      Look for *_sdk.tar.gz and extract it into the sdk/ directory:
-#        mkdir -p sdk && cd sdk
-#        tar xzf sg2002_reCamera_*_sdk.tar.gz
-#   3. Run this script:
-#      SDK_PATH=./sdk/sg2002_recamera_emmc ./scripts/generate-bindings.sh
+#      Look for *_sdk.tar.gz and extract it to any location.
+#
+# Usage:
+#   ./scripts/generate-bindings.sh /path/to/sg2002_recamera_emmc
 #
 # The generated bindings are written to crates/recamera-cvi-sys/src/bindings.rs
 # and should be committed to the repository.
@@ -23,21 +22,25 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT="$PROJECT_ROOT/crates/recamera-cvi-sys/src/bindings.rs"
 WRAPPER="$PROJECT_ROOT/crates/recamera-cvi-sys/wrapper.h"
 
-# --- Validate environment ---
+# --- Validate arguments ---
 
-if [ -z "${SDK_PATH:-}" ]; then
-    echo "Error: SDK_PATH is not set."
+if [ $# -lt 1 ]; then
+    echo "Usage: $0 <SDK_PATH>"
     echo ""
-    echo "1. Download the reCamera-OS SDK from:"
-    echo "   https://github.com/Seeed-Studio/reCamera-OS/releases"
-    echo "   (look for *_sdk.tar.gz)"
+    echo "  SDK_PATH  Path to the extracted reCamera-OS SDK"
+    echo "            (the directory containing cvi_mpi/, buildroot-2021.05/, etc.)"
     echo ""
-    echo "2. Extract it:"
-    echo "   mkdir -p sdk && cd sdk"
-    echo "   tar xzf sg2002_reCamera_*_sdk.tar.gz"
-    echo ""
-    echo "3. Run this script:"
-    echo "   SDK_PATH=./sdk/sg2002_recamera_emmc $0"
+    echo "To get the SDK:"
+    echo "  1. Download *_sdk.tar.gz from https://github.com/Seeed-Studio/reCamera-OS/releases"
+    echo "  2. Extract it: tar xzf sg2002_reCamera_*_sdk.tar.gz"
+    echo "  3. Run: $0 /path/to/sg2002_recamera_emmc"
+    exit 1
+fi
+
+SDK_PATH="$1"
+
+if [ ! -d "$SDK_PATH" ]; then
+    echo "Error: SDK_PATH does not exist: $SDK_PATH"
     exit 1
 fi
 
@@ -49,8 +52,8 @@ MPI_LINUX_INCLUDE="$SDK_PATH/cvi_mpi/include/linux"
 if [ ! -d "$MPI_INCLUDE" ]; then
     echo "Error: CVI MPI headers not found at $MPI_INCLUDE"
     echo ""
-    echo "Make sure SDK_PATH points to the extracted SDK root, e.g.:"
-    echo "  SDK_PATH=./sdk/sg2002_recamera_emmc"
+    echo "Make sure the path points to the extracted SDK root, e.g.:"
+    echo "  $0 /path/to/sg2002_recamera_emmc"
     exit 1
 fi
 
@@ -74,6 +77,15 @@ if [ -n "$NN_INCLUDE" ]; then
     echo "  NPU headers:     $NN_INCLUDE"
 else
     echo "  NPU headers:     not found (inference bindings will be skipped)"
+fi
+
+# --- Detect sysroot (for linux kernel headers) ---
+
+SYSROOT=""
+SYSROOT_CANDIDATE="$SDK_PATH/buildroot-2021.05/output/cvitek_CV181X_musl_riscv64/host/riscv64-buildroot-linux-musl/sysroot"
+if [ -d "$SYSROOT_CANDIDATE/usr/include" ]; then
+    SYSROOT="$SYSROOT_CANDIDATE"
+    echo "  Sysroot:         $SYSROOT"
 fi
 
 if ! command -v bindgen &>/dev/null; then
@@ -118,15 +130,6 @@ HEADER
         echo "#include \"cviruntime.h\""
     fi
 } > "$WRAPPER"
-
-# --- Detect sysroot (for linux kernel headers) ---
-
-SYSROOT=""
-SYSROOT_CANDIDATE="$SDK_PATH/buildroot-2021.05/output/cvitek_CV181X_musl_riscv64/host/riscv64-buildroot-linux-musl/sysroot"
-if [ -d "$SYSROOT_CANDIDATE/usr/include" ]; then
-    SYSROOT="$SYSROOT_CANDIDATE"
-    echo "  Sysroot:         $SYSROOT"
-fi
 
 # --- Build include flags ---
 
