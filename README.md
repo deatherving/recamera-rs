@@ -63,40 +63,16 @@ This project is at an early stage. The API is expected to change as the design s
 
 Most users only need to clone this repo and build. The FFI bindings are pre-generated and committed, and the vendor `.so` libraries are already installed on the reCamera device.
 
-### For app developers (pure-Rust features only)
+### For app developers
 
-No SDK required. Works on macOS and Linux:
+Add this SDK as a dependency in your own project. No SDK download required -- the FFI bindings are pre-generated and the vendor `.so` libraries are already on the reCamera device.
 
-```sh
-cargo build
-cargo test
+```toml
+[dependencies]
+recamera = { git = "https://github.com/anthropics/recamera-rs", features = ["camera", "uart"] }
 ```
 
-### For app developers (cross-compiling for reCamera)
-
-To cross-compile binaries that use `camera` or `infer`, the Rust linker needs the vendor `.so` libraries at build time. These come from the reCamera-OS SDK. The reCamera device itself already has these libraries installed -- the SDK is only needed on your build machine.
-
-1. Download the reCamera-OS SDK from [reCamera-OS releases](https://github.com/Seeed-Studio/reCamera-OS/releases) (look for `*_sdk.tar.gz`) and extract it anywhere.
-
-2. Install the RISC-V target:
-   ```sh
-   rustup target add riscv64gc-unknown-linux-musl
-   ```
-
-3. Build with the SDK path:
-   ```sh
-   SG200X_SDK_PATH=/path/to/sg2002_recamera_emmc \
-     cargo build --target riscv64gc-unknown-linux-musl --release
-   ```
-
-The `build.rs` script finds the vendor libraries at `$SG200X_SDK_PATH/cvi_mpi/lib/` and links them automatically.
-
-Pure-Rust features can be cross-compiled without the SDK:
-
-```sh
-cargo build --target riscv64gc-unknown-linux-musl --release \
-  -p recamera --no-default-features --features "uart,storage,logging,config,system"
-```
+When cross-compiling your application for the reCamera target (`riscv64gc-unknown-linux-musl`), the linker needs the vendor `.so` files at build time. Download the reCamera-OS SDK from [reCamera-OS releases](https://github.com/Seeed-Studio/reCamera-OS/releases) (look for `*_sdk.tar.gz`) and set `SG200X_SDK_PATH` to the extracted path. The `build.rs` script finds the libraries at `$SG200X_SDK_PATH/cvi_mpi/lib/` automatically.
 
 ### For SDK maintainers (regenerating FFI bindings)
 
