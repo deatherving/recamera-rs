@@ -4,23 +4,55 @@
 //! VENC) and exposes a safe Rust API for configuring the camera, starting and
 //! stopping video streams, and capturing individual frames.
 //!
-//! All hardware operations currently return an error because the CVI MPI FFI
-//! bindings have not yet been generated. Once bindings are available the
-//! implementation will initialise the pipeline and capture real frames.
+//! # Example
+//!
+//! ```rust,no_run
+//! use recamera_camera::{Camera, CameraConfig};
+//!
+//! let mut camera = Camera::new(CameraConfig::default()).unwrap();
+//! camera.start_stream().unwrap();
+//! let frame = camera.capture().unwrap();
+//! println!("Captured {}x{} frame, {} bytes", frame.width(), frame.height(), frame.as_bytes().len());
+//! camera.stop_stream().unwrap();
+//! ```
+
+use std::mem::MaybeUninit;
+use std::sync::Arc;
 
 use recamera_core::{Error, FrameData, ImageFormat, Resolution, Result};
+use recamera_cvi_sys::CviLibs;
 
 /// Video channel selector.
 ///
 /// Each channel corresponds to a VPSS output group on the CVI pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Channel {
-    /// CH0 — raw RGB888 output from the ISP/VPSS.
+    /// CH0 -- raw RGB888 output from the ISP/VPSS.
     Raw,
-    /// CH1 — JPEG-compressed output from VENC.
+    /// CH1 -- JPEG-compressed output from VENC.
     Jpeg,
-    /// CH2 — H.264-encoded video stream from VENC.
+    /// CH2 -- H.264-encoded video stream from VENC.
     H264,
+}
+
+impl Channel {
+    /// Returns the VPSS channel index for this channel.
+    fn vpss_chn(&self) -> i32 {
+        match self {
+            Channel::Raw => 0,
+            Channel::Jpeg => 1,
+            Channel::H264 => 2,
+        }
+    }
+
+    /// Returns the image format for this channel.
+    fn image_format(&self) -> ImageFormat {
+        match self {
+            Channel::Raw => ImageFormat::Rgb888,
+            Channel::Jpeg => ImageFormat::Jpeg,
+            Channel::H264 => ImageFormat::H264,
+        }
+    }
 }
 
 /// Configuration for the camera pipeline.
@@ -84,59 +116,260 @@ impl Frame {
     }
 }
 
+/// Check a CVI return code, converting non-zero to an error.
+fn check_cvi(rc: i32, context: &str) -> Result<()> {
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(Error::Camera(format!("{context} failed (rc={rc})")))
+    }
+}
+
 /// Camera handle that wraps the CVI MPI video pipeline.
 ///
-/// This struct will manage the full Sensor -> VI -> ISP -> VPSS -> VENC
-/// pipeline once the CVI MPI FFI bindings are generated. Until then, all
-/// hardware operations return an error.
+/// Manages the full Sensor -> VI -> ISP -> VPSS -> VENC pipeline.
+/// The vendor shared libraries are loaded at runtime on the reCamera device.
 ///
 /// Create one with [`Camera::new`], then call [`Camera::start_stream`] before
 /// capturing frames with [`Camera::capture`].
-#[derive(Debug)]
 pub struct Camera {
-    /// Current camera configuration.
     config: CameraConfig,
-    /// Whether the camera is currently streaming.
+    libs: Arc<CviLibs>,
     streaming: bool,
+}
+
+impl std::fmt::Debug for Camera {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Camera")
+            .field("config", &self.config)
+            .field("streaming", &self.streaming)
+            .finish()
+    }
 }
 
 impl Camera {
     /// Create a new camera handle with the given configuration.
     ///
-    /// Currently returns an error unconditionally because the CVI MPI FFI
-    /// bindings have not yet been generated.
-    pub fn new(_config: CameraConfig) -> Result<Self> {
-        Err(Error::Camera(
-            "not yet implemented: requires CVI MPI bindings".into(),
-        ))
+    /// Loads the CVI vendor libraries and initializes the system and video
+    /// buffer pools. This must be called on the reCamera device where the
+    /// vendor `.so` files are installed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Camera`] if the vendor libraries cannot be loaded
+    /// or if system initialization fails.
+    pub fn new(config: CameraConfig) -> Result<Self> {
+        let libs = CviLibs::load()
+            .map_err(|e| Error::Camera(format!("failed to load CVI libraries: {e}")))?;
+
+        // Initialize VB and SYS
+        unsafe {
+            let mut vb_config: recamera_cvi_sys::VB_CONFIG_S = std::mem::zeroed();
+            vb_config.u32MaxPoolCnt = 1;
+            vb_config.astCommPool[0].u32BlkSize =
+                config.resolution.width * config.resolution.height * 3; // RGB888 worst case
+            vb_config.astCommPool[0].u32BlkCnt = 4;
+
+            let rc = libs
+                .cvi_vb_set_config(&vb_config)
+                .map_err(|e| Error::Camera(format!("VB_SetConfig symbol: {e}")))?;
+            check_cvi(rc, "CVI_VB_SetConfig")?;
+
+            let rc = libs
+                .cvi_vb_init()
+                .map_err(|e| Error::Camera(format!("VB_Init symbol: {e}")))?;
+            check_cvi(rc, "CVI_VB_Init")?;
+
+            let rc = libs
+                .cvi_sys_init()
+                .map_err(|e| Error::Camera(format!("SYS_Init symbol: {e}")))?;
+            check_cvi(rc, "CVI_SYS_Init")?;
+        }
+
+        Ok(Self {
+            config,
+            libs: Arc::new(libs),
+            streaming: false,
+        })
     }
 
     /// Start the video stream.
     ///
+    /// Configures VI, VPSS, and VENC channels and begins capture.
     /// After this call, [`Camera::capture`] can be used to retrieve frames.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Camera`] if any pipeline stage fails to start.
     pub fn start_stream(&mut self) -> Result<()> {
-        Err(Error::Camera(
-            "not yet implemented: requires CVI MPI bindings".into(),
-        ))
+        if self.streaming {
+            return Ok(());
+        }
+
+        let w = self.config.resolution.width;
+        let h = self.config.resolution.height;
+
+        unsafe {
+            // Setup VI device 0, pipe 0, channel 0
+            let mut vi_dev_attr: recamera_cvi_sys::VI_DEV_ATTR_S = std::mem::zeroed();
+            vi_dev_attr.stSize.u32Width = w;
+            vi_dev_attr.stSize.u32Height = h;
+
+            let rc = self
+                .libs
+                .cvi_vi_set_dev_attr(0, &vi_dev_attr)
+                .map_err(|e| Error::Camera(format!("VI_SetDevAttr symbol: {e}")))?;
+            check_cvi(rc, "CVI_VI_SetDevAttr")?;
+
+            let rc = self
+                .libs
+                .cvi_vi_enable_dev(0)
+                .map_err(|e| Error::Camera(format!("VI_EnableDev symbol: {e}")))?;
+            check_cvi(rc, "CVI_VI_EnableDev")?;
+
+            let mut vi_chn_attr: recamera_cvi_sys::VI_CHN_ATTR_S = std::mem::zeroed();
+            vi_chn_attr.stSize.u32Width = w;
+            vi_chn_attr.stSize.u32Height = h;
+            vi_chn_attr.enPixelFormat =
+                recamera_cvi_sys::PIXEL_FORMAT_E::PIXEL_FORMAT_NV21;
+
+            let rc = self
+                .libs
+                .cvi_vi_set_chn_attr(0, 0, &mut vi_chn_attr)
+                .map_err(|e| Error::Camera(format!("VI_SetChnAttr symbol: {e}")))?;
+            check_cvi(rc, "CVI_VI_SetChnAttr")?;
+
+            let rc = self
+                .libs
+                .cvi_vi_enable_chn(0, 0)
+                .map_err(|e| Error::Camera(format!("VI_EnableChn symbol: {e}")))?;
+            check_cvi(rc, "CVI_VI_EnableChn")?;
+
+            // Setup VPSS group 0, channel based on config
+            let mut vpss_grp_attr: recamera_cvi_sys::VPSS_GRP_ATTR_S = std::mem::zeroed();
+            vpss_grp_attr.u32MaxW = w;
+            vpss_grp_attr.u32MaxH = h;
+            vpss_grp_attr.enPixelFormat =
+                recamera_cvi_sys::PIXEL_FORMAT_E::PIXEL_FORMAT_NV21;
+
+            let rc = self
+                .libs
+                .cvi_vpss_create_grp(0, &vpss_grp_attr)
+                .map_err(|e| Error::Camera(format!("VPSS_CreateGrp symbol: {e}")))?;
+            check_cvi(rc, "CVI_VPSS_CreateGrp")?;
+
+            let vpss_chn = self.config.channel.vpss_chn();
+            let mut vpss_chn_attr: recamera_cvi_sys::VPSS_CHN_ATTR_S = std::mem::zeroed();
+            vpss_chn_attr.u32Width = w;
+            vpss_chn_attr.u32Height = h;
+            vpss_chn_attr.enPixelFormat = match self.config.channel {
+                Channel::Raw => recamera_cvi_sys::PIXEL_FORMAT_E::PIXEL_FORMAT_RGB_888,
+                _ => recamera_cvi_sys::PIXEL_FORMAT_E::PIXEL_FORMAT_NV21,
+            };
+
+            let rc = self
+                .libs
+                .cvi_vpss_set_chn_attr(0, vpss_chn, &vpss_chn_attr)
+                .map_err(|e| Error::Camera(format!("VPSS_SetChnAttr symbol: {e}")))?;
+            check_cvi(rc, "CVI_VPSS_SetChnAttr")?;
+
+            let rc = self
+                .libs
+                .cvi_vpss_enable_chn(0, vpss_chn)
+                .map_err(|e| Error::Camera(format!("VPSS_EnableChn symbol: {e}")))?;
+            check_cvi(rc, "CVI_VPSS_EnableChn")?;
+
+            let rc = self
+                .libs
+                .cvi_vpss_start_grp(0)
+                .map_err(|e| Error::Camera(format!("VPSS_StartGrp symbol: {e}")))?;
+            check_cvi(rc, "CVI_VPSS_StartGrp")?;
+        }
+
+        self.streaming = true;
+        Ok(())
     }
 
     /// Stop the video stream.
     ///
-    /// After this call, [`Camera::capture`] will return an error until
-    /// [`Camera::start_stream`] is called again.
+    /// Tears down the VI/VPSS pipeline. After this call, [`Camera::capture`]
+    /// will return an error until [`Camera::start_stream`] is called again.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Camera`] if any pipeline stage fails to stop.
     pub fn stop_stream(&mut self) -> Result<()> {
-        Err(Error::Camera(
-            "not yet implemented: requires CVI MPI bindings".into(),
-        ))
+        if !self.streaming {
+            return Ok(());
+        }
+
+        let vpss_chn = self.config.channel.vpss_chn();
+
+        unsafe {
+            let _ = self.libs.cvi_vpss_stop_grp(0);
+            let _ = self.libs.cvi_vpss_disable_chn(0, vpss_chn);
+            let _ = self.libs.cvi_vpss_destroy_grp(0);
+            let _ = self.libs.cvi_vi_disable_chn(0, 0);
+            let _ = self.libs.cvi_vi_disable_dev(0);
+        }
+
+        self.streaming = false;
+        Ok(())
     }
 
     /// Capture a single frame from the active stream.
     ///
-    /// Returns an error if the camera is not currently streaming.
+    /// Retrieves a frame from the VPSS channel, copies the pixel data, and
+    /// releases the hardware buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Camera`] if the camera is not streaming or if the
+    /// frame cannot be retrieved.
     pub fn capture(&self) -> Result<Frame> {
-        Err(Error::Camera(
-            "not yet implemented: requires CVI MPI bindings".into(),
-        ))
+        if !self.streaming {
+            return Err(Error::Camera("camera is not streaming".into()));
+        }
+
+        let vpss_chn = self.config.channel.vpss_chn();
+        let mut frame_info = MaybeUninit::<recamera_cvi_sys::VIDEO_FRAME_INFO_S>::zeroed();
+
+        unsafe {
+            let frame_ptr = frame_info.as_mut_ptr();
+
+            let rc = self
+                .libs
+                .cvi_vpss_get_chn_frame(0, vpss_chn, frame_ptr, 1000)
+                .map_err(|e| Error::Camera(format!("VPSS_GetChnFrame symbol: {e}")))?;
+            check_cvi(rc, "CVI_VPSS_GetChnFrame")?;
+
+            let frame_info = frame_info.assume_init();
+            let vframe = &frame_info.stVFrame;
+
+            // Copy frame data from the hardware buffer
+            let data_len = vframe.u32Length[0] as usize
+                + vframe.u32Length[1] as usize
+                + vframe.u32Length[2] as usize;
+
+            let data = if !vframe.pu8VirAddr[0].is_null() && data_len > 0 {
+                std::slice::from_raw_parts(vframe.pu8VirAddr[0], data_len).to_vec()
+            } else {
+                Vec::new()
+            };
+
+            // Release the frame back to the hardware
+            let _ = self.libs.cvi_vpss_release_chn_frame(0, vpss_chn, &frame_info);
+
+            Ok(Frame {
+                data: FrameData {
+                    data,
+                    width: vframe.u32Width,
+                    height: vframe.u32Height,
+                    format: self.config.channel.image_format(),
+                    timestamp_ms: vframe.u64PTS,
+                },
+            })
+        }
     }
 
     /// Returns a reference to the current camera configuration.
@@ -147,6 +380,18 @@ impl Camera {
     /// Returns `true` if the camera is currently streaming.
     pub fn is_streaming(&self) -> bool {
         self.streaming
+    }
+}
+
+impl Drop for Camera {
+    fn drop(&mut self) {
+        if self.streaming {
+            let _ = self.stop_stream();
+        }
+        unsafe {
+            let _ = self.libs.cvi_sys_exit();
+            let _ = self.libs.cvi_vb_exit();
+        }
     }
 }
 
@@ -181,14 +426,16 @@ mod tests {
     }
 
     #[test]
-    fn camera_new_returns_not_yet_implemented() {
-        let result = Camera::new(CameraConfig::default());
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("not yet implemented: requires CVI MPI bindings"),
-            "unexpected error message: {err}"
-        );
+    fn channel_vpss_mapping() {
+        assert_eq!(Channel::Raw.vpss_chn(), 0);
+        assert_eq!(Channel::Jpeg.vpss_chn(), 1);
+        assert_eq!(Channel::H264.vpss_chn(), 2);
+    }
+
+    #[test]
+    fn channel_image_format() {
+        assert_eq!(Channel::Raw.image_format(), ImageFormat::Rgb888);
+        assert_eq!(Channel::Jpeg.image_format(), ImageFormat::Jpeg);
+        assert_eq!(Channel::H264.image_format(), ImageFormat::H264);
     }
 }
