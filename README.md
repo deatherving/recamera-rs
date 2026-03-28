@@ -86,18 +86,29 @@ Pure-Rust crates (uart, storage, logging, config, system) do not require the SDK
 
 ## Cross-Compilation
 
-reCamera uses the SG2002 SoC (RISC-V 64-bit). To cross-compile:
+reCamera uses the SG2002 SoC (RISC-V 64-bit). To cross-compile binaries that use the `camera` or `infer` features, you need the reCamera-OS SDK for its pre-built `.so` libraries (used at link time).
+
+1. Download the SDK from [reCamera-OS releases](https://github.com/Seeed-Studio/reCamera-OS/releases) (look for `*_sdk.tar.gz`) and extract it. This is the same SDK used for generating bindings — if you already have it, you don't need to download it again.
+
+2. Install the RISC-V target:
+   ```sh
+   rustup target add riscv64gc-unknown-linux-musl
+   ```
+
+3. Build with the SDK path:
+   ```sh
+   SG200X_SDK_PATH=/path/to/sg2002_recamera_emmc \
+     cargo build --target riscv64gc-unknown-linux-musl --release
+   ```
+
+The `build.rs` script finds the vendor libraries at `$SG200X_SDK_PATH/cvi_mpi/lib/` and links them automatically.
+
+Pure-Rust crates (uart, storage, logging, config, system) can be cross-compiled without the SDK:
 
 ```sh
-# Install the target
-rustup target add riscv64gc-unknown-linux-musl
-
-# Build (set SG200X_SDK_PATH to the SDK sysroot for camera/infer linking)
-export SG200X_SDK_PATH=/path/to/sg2002_recamera_emmc
-cargo build --target riscv64gc-unknown-linux-musl --release
+cargo build --target riscv64gc-unknown-linux-musl --release \
+  -p recamera --no-default-features --features "uart,storage,logging,config,system"
 ```
-
-Pure-Rust crates (uart, storage, logging, config, system) can be cross-compiled without the SDK.
 
 ## License
 
