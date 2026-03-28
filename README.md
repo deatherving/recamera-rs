@@ -59,36 +59,24 @@ This project is at an early stage. The API is expected to change as the design s
 - NPU inference bindings are not yet available (cviruntime headers not included in current SDK release).
 - `camera` and `infer` crate implementations are stubbed, pending wiring to the FFI bindings.
 
-## Generating FFI Bindings
+## Getting Started
 
-Pre-generated bindings are committed to the repo, so most users don't need to do this. If you need to regenerate them (e.g., for a new SDK version):
+Most users only need to clone this repo and build. The FFI bindings are pre-generated and committed, and the vendor `.so` libraries are already installed on the reCamera device.
 
-1. Download the reCamera-OS SDK from [reCamera-OS releases](https://github.com/Seeed-Studio/reCamera-OS/releases) (look for `*_sdk.tar.gz`) and extract it to any location.
+### For app developers (pure-Rust features only)
 
-2. Install bindgen:
-   ```sh
-   cargo install bindgen-cli
-   ```
+No SDK required. Works on macOS and Linux:
 
-3. Run the generation script, passing the path to your extracted SDK:
-   ```sh
-   ./scripts/generate-bindings.sh /path/to/sg2002_recamera_emmc
-   ```
+```sh
+cargo build
+cargo test
+```
 
-4. Verify and commit:
-   ```sh
-   cargo check -p recamera-cvi-sys
-   git add crates/recamera-cvi-sys/src/bindings.rs
-   git commit -m "feat: update FFI bindings"
-   ```
+### For app developers (cross-compiling for reCamera)
 
-Pure-Rust crates (uart, storage, logging, config, system) do not require the SDK.
+To cross-compile binaries that use `camera` or `infer`, the Rust linker needs the vendor `.so` libraries at build time. These come from the reCamera-OS SDK. The reCamera device itself already has these libraries installed -- the SDK is only needed on your build machine.
 
-## Cross-Compilation
-
-reCamera uses the SG2002 SoC (RISC-V 64-bit). To cross-compile binaries that use the `camera` or `infer` features, you need the reCamera-OS SDK for its pre-built `.so` libraries (used at link time).
-
-1. Download the SDK from [reCamera-OS releases](https://github.com/Seeed-Studio/reCamera-OS/releases) (look for `*_sdk.tar.gz`) and extract it. This is the same SDK used for generating bindings — if you already have it, you don't need to download it again.
+1. Download the reCamera-OS SDK from [reCamera-OS releases](https://github.com/Seeed-Studio/reCamera-OS/releases) (look for `*_sdk.tar.gz`) and extract it anywhere.
 
 2. Install the RISC-V target:
    ```sh
@@ -103,12 +91,41 @@ reCamera uses the SG2002 SoC (RISC-V 64-bit). To cross-compile binaries that use
 
 The `build.rs` script finds the vendor libraries at `$SG200X_SDK_PATH/cvi_mpi/lib/` and links them automatically.
 
-Pure-Rust crates (uart, storage, logging, config, system) can be cross-compiled without the SDK:
+Pure-Rust features can be cross-compiled without the SDK:
 
 ```sh
 cargo build --target riscv64gc-unknown-linux-musl --release \
   -p recamera --no-default-features --features "uart,storage,logging,config,system"
 ```
+
+### For SDK maintainers (regenerating FFI bindings)
+
+The pre-generated bindings are committed to the repo. You only need to regenerate them when the reCamera-OS SDK is updated with new headers.
+
+The script `scripts/generate-bindings.sh` is included for this purpose. It uses `bindgen` to produce `crates/recamera-cvi-sys/src/bindings.rs` from the SDK headers.
+
+1. Download the reCamera-OS SDK (same as above).
+
+2. Install bindgen:
+   ```sh
+   cargo install bindgen-cli
+   ```
+
+3. Run the generation script:
+   ```sh
+   ./scripts/generate-bindings.sh /path/to/sg2002_recamera_emmc
+   ```
+
+4. Verify and commit:
+   ```sh
+   cargo check -p recamera-cvi-sys
+   git add crates/recamera-cvi-sys/src/bindings.rs
+   git commit -m "feat: update FFI bindings"
+   ```
+
+## Supported Platforms
+
+This SDK is designed to be built on **macOS** or **Linux** and cross-compiled for the reCamera (RISC-V 64-bit, musl libc). All paths and scripts are portable -- there are no host-specific configurations in the codebase.
 
 ## License
 
