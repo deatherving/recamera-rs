@@ -74,30 +74,9 @@ recamera = { git = "https://github.com/anthropics/recamera-rs", features = ["cam
 
 When cross-compiling your application for the reCamera target (`riscv64gc-unknown-linux-musl`), the linker needs the vendor `.so` files at build time. Download the reCamera-OS SDK from [reCamera-OS releases](https://github.com/Seeed-Studio/reCamera-OS/releases) (look for `*_sdk.tar.gz`) and set `SG200X_SDK_PATH` to the extracted path. The `build.rs` script finds the libraries at `$SG200X_SDK_PATH/cvi_mpi/lib/` automatically.
 
-### For SDK maintainers (regenerating FFI bindings)
+### For SDK maintainers
 
-The pre-generated bindings are committed to the repo. You only need to regenerate them when the reCamera-OS SDK is updated with new headers.
-
-The script `scripts/generate-bindings.sh` is included for this purpose. It uses `bindgen` to produce `crates/recamera-cvi-sys/src/bindings.rs` from the SDK headers.
-
-1. Download the reCamera-OS SDK (same as above).
-
-2. Install bindgen:
-   ```sh
-   cargo install bindgen-cli
-   ```
-
-3. Run the generation script:
-   ```sh
-   ./scripts/generate-bindings.sh /path/to/sg2002_recamera_emmc
-   ```
-
-4. Verify and commit:
-   ```sh
-   cargo check -p recamera-cvi-sys
-   git add crates/recamera-cvi-sys/src/bindings.rs
-   git commit -m "feat: update FFI bindings"
-   ```
+See [docs/MAINTAINER.md](docs/MAINTAINER.md) for instructions on regenerating FFI bindings and other development tasks.
 
 ## Supported Platforms
 

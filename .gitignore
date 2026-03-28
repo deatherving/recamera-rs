@@ -36,5 +36,5 @@ sdk/
 # Lock file (library crate)
 Cargo.lock
 
-# Docs of implementation
-docs
+# Internal design docs (superpowers)
+docs/superpowers/
