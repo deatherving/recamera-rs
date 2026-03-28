@@ -61,7 +61,7 @@ This project is at an early stage. The API is expected to change as the design s
 
 The `camera` and `infer` features require FFI bindings for the SG2002 vendor C libraries. Pre-generated bindings are committed to the repo, but if you need to regenerate them:
 
-1. Download the SDK tarball from [reCamera-OS releases](https://github.com/Seeed-Studio/reCamera-OS/releases) (look for `*_sdk.tar.gz`) and extract it. Alternatively, clone the [Milk-V Duo SDK](https://github.com/milkv-duo/duo-buildroot-sdk).
+1. Download the SDK tarball from [reCamera-OS releases](https://github.com/Seeed-Studio/reCamera-OS/releases) (look for `*_sdk.tar.gz`) and extract it.
 
 2. Install bindgen:
    ```sh
@@ -80,7 +80,7 @@ The `camera` and `infer` features require FFI bindings for the SG2002 vendor C l
    git commit -m "feat: update FFI bindings"
    ```
 
-The script auto-detects both the reCamera-OS SDK and Milk-V Duo SDK layouts.
+Pure-Rust crates (uart, storage, logging, config, system) do not require the SDK.
 
 ## Cross-Compilation
 
