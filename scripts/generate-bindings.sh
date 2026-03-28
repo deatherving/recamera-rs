@@ -3,14 +3,15 @@
 # Generate FFI bindings for the SG2002 CVI libraries.
 #
 # Prerequisites:
-#   1. Install bindgen-cli:  cargo install bindgen-cli
+#   1. Install Rust and bindgen-cli:
+#      cargo install bindgen-cli
 #   2. Download the reCamera-OS SDK from:
 #      https://github.com/Seeed-Studio/reCamera-OS/releases
-#      Look for *_sdk.tar.gz and extract it.
-#   3. Set SDK_PATH to the root of the extracted SDK
-#
-# Usage:
-#   SDK_PATH=/path/to/sg2002_recamera_emmc ./scripts/generate-bindings.sh
+#      Look for *_sdk.tar.gz and extract it into the sdk/ directory:
+#        mkdir -p sdk && cd sdk
+#        tar xzf sg2002_reCamera_*_sdk.tar.gz
+#   3. Run this script:
+#      SDK_PATH=./sdk/sg2002_recamera_emmc ./scripts/generate-bindings.sh
 #
 # The generated bindings are written to crates/recamera-cvi-sys/src/bindings.rs
 # and should be committed to the repository.
@@ -27,53 +28,56 @@ WRAPPER="$PROJECT_ROOT/crates/recamera-cvi-sys/wrapper.h"
 if [ -z "${SDK_PATH:-}" ]; then
     echo "Error: SDK_PATH is not set."
     echo ""
-    echo "Download the reCamera-OS SDK from:"
-    echo "  https://github.com/Seeed-Studio/reCamera-OS/releases"
+    echo "1. Download the reCamera-OS SDK from:"
+    echo "   https://github.com/Seeed-Studio/reCamera-OS/releases"
+    echo "   (look for *_sdk.tar.gz)"
     echo ""
-    echo "Extract it and run:"
-    echo "  SDK_PATH=/path/to/sg2002_recamera_emmc $0"
+    echo "2. Extract it:"
+    echo "   mkdir -p sdk && cd sdk"
+    echo "   tar xzf sg2002_reCamera_*_sdk.tar.gz"
+    echo ""
+    echo "3. Run this script:"
+    echo "   SDK_PATH=./sdk/sg2002_recamera_emmc $0"
     exit 1
 fi
 
-# --- Detect SDK layout ---
+# --- Detect SDK headers ---
 
-MPI_INCLUDE=""
+MPI_INCLUDE="$SDK_PATH/cvi_mpi/include"
+MPI_LINUX_INCLUDE="$SDK_PATH/cvi_mpi/include/linux"
+
+if [ ! -d "$MPI_INCLUDE" ]; then
+    echo "Error: CVI MPI headers not found at $MPI_INCLUDE"
+    echo ""
+    echo "Make sure SDK_PATH points to the extracted SDK root, e.g.:"
+    echo "  SDK_PATH=./sdk/sg2002_recamera_emmc"
+    exit 1
+fi
+
+if [ ! -d "$MPI_LINUX_INCLUDE" ]; then
+    echo "Error: CVI common headers not found at $MPI_LINUX_INCLUDE"
+    exit 1
+fi
+
+# NPU inference headers (optional — not included in current SDK release)
 NN_INCLUDE=""
-
-# reCamera-OS SDK tarball:
-#   <SDK_PATH>/cvi_mpi/include/
-#   <SDK_PATH>/tpu_sdk/include/  (or cviruntime/include/)
-if [ -d "$SDK_PATH/cvi_mpi/include" ]; then
-    MPI_INCLUDE="$SDK_PATH/cvi_mpi/include"
-    if [ -d "$SDK_PATH/tpu_sdk/include" ]; then
-        NN_INCLUDE="$SDK_PATH/tpu_sdk/include"
-    elif [ -d "$SDK_PATH/cviruntime/include" ]; then
-        NN_INCLUDE="$SDK_PATH/cviruntime/include"
-    fi
-fi
-
-if [ -z "$MPI_INCLUDE" ]; then
-    echo "Error: Could not find CVI MPI headers in SDK_PATH=$SDK_PATH"
-    echo ""
-    echo "Expected: $SDK_PATH/cvi_mpi/include/"
-    echo ""
-    echo "Make sure you downloaded and extracted the reCamera-OS SDK tarball."
-    exit 1
-fi
-
-if [ -z "$NN_INCLUDE" ]; then
-    echo "Warning: CVI runtime (NPU) headers not found. Inference bindings will be skipped."
-    echo "Looked for:"
-    echo "  $SDK_PATH/tpu_sdk/include/"
-    echo "  $SDK_PATH/cviruntime/include/"
-    echo ""
+if [ -d "$SDK_PATH/tpu_sdk/include" ]; then
+    NN_INCLUDE="$SDK_PATH/tpu_sdk/include"
+elif [ -d "$SDK_PATH/cviruntime/include" ]; then
+    NN_INCLUDE="$SDK_PATH/cviruntime/include"
 fi
 
 echo "SDK detected:"
 echo "  MPI headers:     $MPI_INCLUDE"
-echo "  Runtime headers: ${NN_INCLUDE:-<not found>}"
+echo "  Common headers:  $MPI_LINUX_INCLUDE"
+if [ -n "$NN_INCLUDE" ]; then
+    echo "  NPU headers:     $NN_INCLUDE"
+else
+    echo "  NPU headers:     not found (inference bindings will be skipped)"
+fi
 
 if ! command -v bindgen &>/dev/null; then
+    echo ""
     echo "Error: bindgen-cli is not installed."
     echo "Install it with: cargo install bindgen-cli"
     exit 1
@@ -86,22 +90,25 @@ fi
 /**
  * Wrapper header for bindgen.
  *
- * Includes the CVI MPI and CVI runtime headers needed for
- * camera capture and NPU inference on the SG2002 SoC.
+ * Includes the CVI MPI headers needed for camera capture
+ * and video processing on the SG2002 SoC.
  */
 
-/* Base types and system */
+/* Common types (cvi_type.h, cvi_defines.h, etc.) */
 #include "cvi_type.h"
+#include "cvi_common.h"
+#include "cvi_comm_sys.h"
+#include "cvi_comm_vb.h"
+#include "cvi_comm_video.h"
+#include "cvi_comm_vi.h"
+#include "cvi_comm_vpss.h"
+#include "cvi_comm_venc.h"
+
+/* API functions */
 #include "cvi_sys.h"
 #include "cvi_vb.h"
-
-/* Video input */
 #include "cvi_vi.h"
-
-/* Video processing */
 #include "cvi_vpss.h"
-
-/* Video encoding */
 #include "cvi_venc.h"
 HEADER
 
@@ -112,15 +119,28 @@ HEADER
     fi
 } > "$WRAPPER"
 
+# --- Detect sysroot (for linux kernel headers) ---
+
+SYSROOT=""
+SYSROOT_CANDIDATE="$SDK_PATH/buildroot-2021.05/output/cvitek_CV181X_musl_riscv64/host/riscv64-buildroot-linux-musl/sysroot"
+if [ -d "$SYSROOT_CANDIDATE/usr/include" ]; then
+    SYSROOT="$SYSROOT_CANDIDATE"
+    echo "  Sysroot:         $SYSROOT"
+fi
+
 # --- Build include flags ---
 
-INCLUDE_FLAGS="-I$MPI_INCLUDE"
+INCLUDE_FLAGS="-I$MPI_INCLUDE -I$MPI_LINUX_INCLUDE"
 if [ -n "$NN_INCLUDE" ]; then
     INCLUDE_FLAGS="$INCLUDE_FLAGS -I$NN_INCLUDE"
+fi
+if [ -n "$SYSROOT" ]; then
+    INCLUDE_FLAGS="$INCLUDE_FLAGS --sysroot=$SYSROOT -isystem $SYSROOT/usr/include"
 fi
 
 # --- Run bindgen ---
 
+echo ""
 echo "Generating bindings..."
 
 ALLOWLIST_ARGS=(

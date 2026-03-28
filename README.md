@@ -55,13 +55,21 @@ recamera = { version = "0.1", features = ["full"] }
 This project is at an early stage. The API is expected to change as the design stabilizes.
 
 - Pure-Rust crates (`core`, `uart`, `rs485`, `storage`, `logging`, `config`, `system`) are functional.
-- FFI crates (`camera`, `infer`, `cvi-sys`) are scaffolded but pending real bindings against the CVI runtime libraries.
+- FFI crates (`cvi-sys`) include pre-generated bindings for the CVI MPI camera/video libraries (263 functions).
+- NPU inference bindings are not yet available (cviruntime headers not included in current SDK release).
+- `camera` and `infer` crate implementations are stubbed, pending wiring to the FFI bindings.
 
 ## Generating FFI Bindings
 
-The `camera` and `infer` features require FFI bindings for the SG2002 vendor C libraries. Pre-generated bindings are committed to the repo, but if you need to regenerate them:
+Pre-generated bindings are committed to the repo, so most users don't need to do this. If you need to regenerate them (e.g., for a new SDK version):
 
-1. Download the SDK tarball from [reCamera-OS releases](https://github.com/Seeed-Studio/reCamera-OS/releases) (look for `*_sdk.tar.gz`) and extract it.
+1. Download the reCamera-OS SDK from [reCamera-OS releases](https://github.com/Seeed-Studio/reCamera-OS/releases) (look for `*_sdk.tar.gz`):
+   ```sh
+   mkdir -p sdk && cd sdk
+   # Download sg2002_reCamera_*_sdk.tar.gz from the releases page
+   tar xzf sg2002_reCamera_*_sdk.tar.gz
+   cd ..
+   ```
 
 2. Install bindgen:
    ```sh
@@ -70,7 +78,7 @@ The `camera` and `infer` features require FFI bindings for the SG2002 vendor C l
 
 3. Run the generation script:
    ```sh
-   SDK_PATH=/path/to/sg2002_recamera_emmc ./scripts/generate-bindings.sh
+   SDK_PATH=./sdk/sg2002_recamera_emmc ./scripts/generate-bindings.sh
    ```
 
 4. Verify and commit:

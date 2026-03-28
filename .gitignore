@@ -27,6 +27,9 @@ target
 # Local cargo config (cross-compilation settings vary per machine)
 .cargo/
 
+# reCamera-OS SDK (download from https://github.com/Seeed-Studio/reCamera-OS/releases)
+sdk/
+
 # Lock file (library crate)
 Cargo.lock
 
