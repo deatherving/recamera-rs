@@ -45,7 +45,6 @@ pub struct CviLibs {
     /// Handle to `libvenc.so` (video encoding functions).
     venc: Library,
     /// Handle to `libcviruntime.so` (NPU inference runtime).
-    #[allow(dead_code)]
     cviruntime: Library,
 }
 
@@ -579,5 +578,129 @@ impl CviLibs {
             unsafe extern "C" fn(VENC_CHN, *mut VENC_STREAM_S) -> CVI_S32,
         > = self.venc.get(b"CVI_VENC_ReleaseStream")?;
         Ok(func(chn, stream))
+    }
+
+    // ---------------------------------------------------------------
+    // NN functions (from libcviruntime.so)
+    // ---------------------------------------------------------------
+
+    /// Register a .cvimodel file and get a model handle.
+    ///
+    /// # Safety
+    ///
+    /// `model_file` must be a valid null-terminated C string pointing to an
+    /// existing `.cvimodel` file. `model` must point to valid, writable memory.
+    pub unsafe fn cvi_nn_register_model(
+        &self,
+        model_file: *const core::ffi::c_char,
+        model: *mut CVI_MODEL_HANDLE,
+    ) -> Result<CVI_RC, libloading::Error> {
+        let func: libloading::Symbol<
+            unsafe extern "C" fn(*const core::ffi::c_char, *mut CVI_MODEL_HANDLE) -> CVI_RC,
+        > = self.cviruntime.get(b"CVI_NN_RegisterModel")?;
+        Ok(func(model_file, model))
+    }
+
+    /// Get input and output tensors from a model.
+    ///
+    /// # Safety
+    ///
+    /// `model` must be a valid handle obtained from
+    /// [`CviLibs::cvi_nn_register_model`]. All pointer arguments must be valid
+    /// and writable.
+    pub unsafe fn cvi_nn_get_input_output_tensors(
+        &self,
+        model: CVI_MODEL_HANDLE,
+        inputs: *mut *mut CVI_TENSOR,
+        input_num: *mut i32,
+        outputs: *mut *mut CVI_TENSOR,
+        output_num: *mut i32,
+    ) -> Result<CVI_RC, libloading::Error> {
+        let func: libloading::Symbol<
+            unsafe extern "C" fn(
+                CVI_MODEL_HANDLE,
+                *mut *mut CVI_TENSOR,
+                *mut i32,
+                *mut *mut CVI_TENSOR,
+                *mut i32,
+            ) -> CVI_RC,
+        > = self.cviruntime.get(b"CVI_NN_GetInputOutputTensors")?;
+        Ok(func(model, inputs, input_num, outputs, output_num))
+    }
+
+    /// Run inference (blocking).
+    ///
+    /// # Safety
+    ///
+    /// `model` must be a valid handle. `inputs` and `outputs` must point to
+    /// tensor arrays of the correct length.
+    pub unsafe fn cvi_nn_forward(
+        &self,
+        model: CVI_MODEL_HANDLE,
+        inputs: *mut CVI_TENSOR,
+        input_num: i32,
+        outputs: *mut CVI_TENSOR,
+        output_num: i32,
+    ) -> Result<CVI_RC, libloading::Error> {
+        let func: libloading::Symbol<
+            unsafe extern "C" fn(CVI_MODEL_HANDLE, *mut CVI_TENSOR, i32, *mut CVI_TENSOR, i32) -> CVI_RC,
+        > = self.cviruntime.get(b"CVI_NN_Forward")?;
+        Ok(func(model, inputs, input_num, outputs, output_num))
+    }
+
+    /// Cleanup/unload a model.
+    ///
+    /// # Safety
+    ///
+    /// `model` must be a valid handle that has not already been cleaned up.
+    pub unsafe fn cvi_nn_cleanup_model(
+        &self,
+        model: CVI_MODEL_HANDLE,
+    ) -> Result<CVI_RC, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(CVI_MODEL_HANDLE) -> CVI_RC> =
+            self.cviruntime.get(b"CVI_NN_CleanupModel")?;
+        Ok(func(model))
+    }
+
+    /// Get tensor buffer pointer.
+    ///
+    /// # Safety
+    ///
+    /// `tensor` must point to a valid `CVI_TENSOR`.
+    pub unsafe fn cvi_nn_tensor_ptr(
+        &self,
+        tensor: *mut CVI_TENSOR,
+    ) -> Result<*mut core::ffi::c_void, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(*mut CVI_TENSOR) -> *mut core::ffi::c_void> =
+            self.cviruntime.get(b"CVI_NN_TensorPtr")?;
+        Ok(func(tensor))
+    }
+
+    /// Get tensor element count.
+    ///
+    /// # Safety
+    ///
+    /// `tensor` must point to a valid `CVI_TENSOR`.
+    pub unsafe fn cvi_nn_tensor_count(
+        &self,
+        tensor: *mut CVI_TENSOR,
+    ) -> Result<usize, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(*mut CVI_TENSOR) -> usize> =
+            self.cviruntime.get(b"CVI_NN_TensorCount")?;
+        Ok(func(tensor))
+    }
+
+    /// Get tensor shape.
+    ///
+    /// # Safety
+    ///
+    /// `tensor` must point to a valid `CVI_TENSOR`.
+    pub unsafe fn cvi_nn_tensor_shape(
+        &self,
+        tensor: *mut CVI_TENSOR,
+    ) -> Result<CVI_SHAPE, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(*mut CVI_TENSOR) -> CVI_SHAPE> =
+            self.cviruntime.get(b"CVI_NN_TensorShape")?;
+        Ok(func(tensor))
     }
 }

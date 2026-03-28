@@ -62,9 +62,11 @@ if [ ! -d "$MPI_LINUX_INCLUDE" ]; then
     exit 1
 fi
 
-# NPU inference headers (optional — not included in current SDK release)
+# NPU inference headers
 NN_INCLUDE=""
-if [ -d "$SDK_PATH/tpu_sdk/include" ]; then
+if [ -d "$SDK_PATH/install/soc_sg2002_recamera_emmc/tpu_musl_riscv64/cvitek_tpu_sdk/include" ]; then
+    NN_INCLUDE="$SDK_PATH/install/soc_sg2002_recamera_emmc/tpu_musl_riscv64/cvitek_tpu_sdk/include"
+elif [ -d "$SDK_PATH/tpu_sdk/include" ]; then
     NN_INCLUDE="$SDK_PATH/tpu_sdk/include"
 elif [ -d "$SDK_PATH/cviruntime/include" ]; then
     NN_INCLUDE="$SDK_PATH/cviruntime/include"

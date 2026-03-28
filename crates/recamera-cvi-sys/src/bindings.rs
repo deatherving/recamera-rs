@@ -304,6 +304,11 @@ pub const CVI_H26X_ISO_SEND_FRAME_MAX: u32 = 1;
 pub const CVI_H26X_SENSOR_EN_DEFAULT: u32 = 0;
 pub const CVI_H26X_SENSOR_EN_MIN: u32 = 0;
 pub const CVI_H26X_SENSOR_EN_MAX: u32 = 1;
+pub const CVI_RC_SUCCESS: u32 = 0;
+pub const CVI_RC_FAILURE: i32 = -1;
+pub const CVI_TPU_ERR_APPID: u32 = 0;
+pub const CVI_TPU_RUNTIME: u32 = 119;
+pub const CVI_DIM_MAX: u32 = 6;
 pub type CVI_UCHAR = ::core::ffi::c_uchar;
 pub type CVI_U8 = ::core::ffi::c_uchar;
 pub type CVI_U16 = ::core::ffi::c_ushort;
@@ -3123,3 +3128,103 @@ pub struct _VENC_SVC_PARAM_S {
     pub smart_ai_en: CVI_BOOL,
 }
 pub type VENC_SVC_PARAM_S = _VENC_SVC_PARAM_S;
+#[repr(i32)]
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+pub enum _CVI_TPU_ERRCODE {
+    CVI_ERR_TPU_SUCCESS = 0,
+    CVI_ERR_TPU_AGAIN = -1065910256,
+    CVI_ERR_TPU_FAILURE = -1,
+    CVI_ERR_TPU_TIMEOUT = -1065910251,
+    CVI_ERR_TPU_UNINIT = -1065910265,
+    CVI_ERR_TPU_INVALID_ARG = -1065910269,
+    CVI_ERR_TPU_NOMEM = -1065910260,
+    CVI_ERR_TPU_DATA_ERR = -1065910250,
+    CVI_ERR_TPU_BUSY = -1065910254,
+    CVI_ERR_TPU_UNSUPPORT = -1065910264,
+}
+pub use self::_CVI_TPU_ERRCODE as CVI_TPU_ERRCODE;
+#[repr(u32)]
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+pub enum CVI_FMT {
+    CVI_FMT_FP32 = 0,
+    CVI_FMT_INT32 = 1,
+    CVI_FMT_UINT32 = 2,
+    CVI_FMT_BF16 = 3,
+    CVI_FMT_INT16 = 4,
+    CVI_FMT_UINT16 = 5,
+    CVI_FMT_INT8 = 6,
+    CVI_FMT_UINT8 = 7,
+}
+#[repr(u32)]
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+pub enum CVI_MEM_TYPE_E {
+    CVI_MEM_SYSTEM = 1,
+    CVI_MEM_DEVICE = 2,
+}
+#[repr(u32)]
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+pub enum CVI_NN_PIXEL_FORMAT_E {
+    CVI_NN_PIXEL_RGB_PACKED = 0,
+    CVI_NN_PIXEL_BGR_PACKED = 1,
+    CVI_NN_PIXEL_RGB_PLANAR = 2,
+    CVI_NN_PIXEL_BGR_PLANAR = 3,
+    CVI_NN_PIXEL_YUV_NV12 = 11,
+    CVI_NN_PIXEL_YUV_NV21 = 12,
+    CVI_NN_PIXEL_YUV_420_PLANAR = 13,
+    CVI_NN_PIXEL_GRAYSCALE = 15,
+    CVI_NN_PIXEL_TENSOR = 100,
+    CVI_NN_PIXEL_RGBA_PLANAR = 1000,
+    CVI_NN_PIXEL_PLANAR = 101,
+    CVI_NN_PIXEL_PACKED = 102,
+}
+#[repr(u32)]
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+pub enum CVI_CONFIG_OPTION {
+    OPTION_OUTPUT_ALL_TENSORS = 4,
+    OPTION_PROGRAM_INDEX = 9,
+    OPTION_BATCH_SIZE = 1,
+    OPTION_SKIP_POSTPROCESS = 6,
+    OPTION_PREPARE_BUF_FOR_INPUTS = 2,
+    OPTION_PREPARE_BUF_FOR_OUTPUTS = 3,
+    OPTION_SKIP_PREPROCESS = 5,
+    OPTION_INPUT_MEM_TYPE = 7,
+    OPTION_OUTPUT_MEM_TYPE = 8,
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct CVI_SHAPE {
+    pub dim: [i32; 6usize],
+    pub dim_size: usize,
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct CVI_TENSOR {
+    pub name: *mut ::core::ffi::c_char,
+    pub shape: CVI_SHAPE,
+    pub fmt: CVI_FMT,
+    pub count: usize,
+    pub mem_size: usize,
+    pub sys_mem: *mut u8,
+    pub paddr: u64,
+    pub mem_type: CVI_MEM_TYPE_E,
+    pub qscale: f32,
+    pub zero_point: ::core::ffi::c_int,
+    pub pixel_format: CVI_NN_PIXEL_FORMAT_E,
+    pub aligned: bool,
+    pub mean: [f32; 3usize],
+    pub scale: [f32; 3usize],
+    pub owner: *mut ::core::ffi::c_void,
+    pub reserved: [::core::ffi::c_char; 32usize],
+}
+pub use self::CVI_NN_PIXEL_FORMAT_E as CVI_FRAME_TYPE;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct CVI_VIDEO_FRAME_INFO {
+    pub type_: CVI_FRAME_TYPE,
+    pub shape: CVI_SHAPE,
+    pub fmt: CVI_FMT,
+    pub stride: [u32; 3usize],
+    pub pyaddr: [u64; 3usize],
+}
+pub type CVI_MODEL_HANDLE = *mut ::core::ffi::c_void;
+pub type CVI_RC = ::core::ffi::c_int;

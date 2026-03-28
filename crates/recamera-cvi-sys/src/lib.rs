@@ -9,6 +9,7 @@
 //! - **VI** -- video input (camera sensor)
 //! - **VPSS** -- video processing subsystem
 //! - **VENC** -- video encoding (H.264, H.265, JPEG)
+//! - **NN** -- NPU inference runtime (model loading, tensor I/O, forward pass)
 //!
 //! # Runtime loading
 //!
