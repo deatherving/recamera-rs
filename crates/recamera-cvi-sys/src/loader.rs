@@ -339,10 +339,7 @@ impl CviLibs {
     /// # Safety
     ///
     /// The group must have been stopped and all channels disabled first.
-    pub unsafe fn cvi_vpss_destroy_grp(
-        &self,
-        grp: VPSS_GRP,
-    ) -> Result<CVI_S32, libloading::Error> {
+    pub unsafe fn cvi_vpss_destroy_grp(&self, grp: VPSS_GRP) -> Result<CVI_S32, libloading::Error> {
         let func: libloading::Symbol<unsafe extern "C" fn(VPSS_GRP) -> CVI_S32> =
             self.vpss.get(b"CVI_VPSS_DestroyGrp")?;
         Ok(func(grp))
@@ -353,10 +350,7 @@ impl CviLibs {
     /// # Safety
     ///
     /// The group must have been created first.
-    pub unsafe fn cvi_vpss_start_grp(
-        &self,
-        grp: VPSS_GRP,
-    ) -> Result<CVI_S32, libloading::Error> {
+    pub unsafe fn cvi_vpss_start_grp(&self, grp: VPSS_GRP) -> Result<CVI_S32, libloading::Error> {
         let func: libloading::Symbol<unsafe extern "C" fn(VPSS_GRP) -> CVI_S32> =
             self.vpss.get(b"CVI_VPSS_StartGrp")?;
         Ok(func(grp))
@@ -435,12 +429,7 @@ impl CviLibs {
         timeout_ms: CVI_S32,
     ) -> Result<CVI_S32, libloading::Error> {
         let func: libloading::Symbol<
-            unsafe extern "C" fn(
-                VPSS_GRP,
-                VPSS_CHN,
-                *mut VIDEO_FRAME_INFO_S,
-                CVI_S32,
-            ) -> CVI_S32,
+            unsafe extern "C" fn(VPSS_GRP, VPSS_CHN, *mut VIDEO_FRAME_INFO_S, CVI_S32) -> CVI_S32,
         > = self.vpss.get(b"CVI_VPSS_GetChnFrame")?;
         Ok(func(grp, chn, frame, timeout_ms))
     }
@@ -488,10 +477,7 @@ impl CviLibs {
     /// # Safety
     ///
     /// The channel must have been stopped and all streams released first.
-    pub unsafe fn cvi_venc_destroy_chn(
-        &self,
-        chn: VENC_CHN,
-    ) -> Result<CVI_S32, libloading::Error> {
+    pub unsafe fn cvi_venc_destroy_chn(&self, chn: VENC_CHN) -> Result<CVI_S32, libloading::Error> {
         let func: libloading::Symbol<unsafe extern "C" fn(VENC_CHN) -> CVI_S32> =
             self.venc.get(b"CVI_VENC_DestroyChn")?;
         Ok(func(chn))
@@ -643,7 +629,13 @@ impl CviLibs {
         output_num: i32,
     ) -> Result<CVI_RC, libloading::Error> {
         let func: libloading::Symbol<
-            unsafe extern "C" fn(CVI_MODEL_HANDLE, *mut CVI_TENSOR, i32, *mut CVI_TENSOR, i32) -> CVI_RC,
+            unsafe extern "C" fn(
+                CVI_MODEL_HANDLE,
+                *mut CVI_TENSOR,
+                i32,
+                *mut CVI_TENSOR,
+                i32,
+            ) -> CVI_RC,
         > = self.cviruntime.get(b"CVI_NN_Forward")?;
         Ok(func(model, inputs, input_num, outputs, output_num))
     }
@@ -671,8 +663,9 @@ impl CviLibs {
         &self,
         tensor: *mut CVI_TENSOR,
     ) -> Result<*mut core::ffi::c_void, libloading::Error> {
-        let func: libloading::Symbol<unsafe extern "C" fn(*mut CVI_TENSOR) -> *mut core::ffi::c_void> =
-            self.cviruntime.get(b"CVI_NN_TensorPtr")?;
+        let func: libloading::Symbol<
+            unsafe extern "C" fn(*mut CVI_TENSOR) -> *mut core::ffi::c_void,
+        > = self.cviruntime.get(b"CVI_NN_TensorPtr")?;
         Ok(func(tensor))
     }
 

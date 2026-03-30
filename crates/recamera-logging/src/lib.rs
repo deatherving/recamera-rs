@@ -17,7 +17,7 @@
 use std::path::PathBuf;
 
 use recamera_core::Result;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Log verbosity level.
 ///

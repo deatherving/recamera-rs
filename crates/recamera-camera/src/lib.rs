@@ -230,8 +230,7 @@ impl Camera {
             let mut vi_chn_attr: recamera_cvi_sys::VI_CHN_ATTR_S = std::mem::zeroed();
             vi_chn_attr.stSize.u32Width = w;
             vi_chn_attr.stSize.u32Height = h;
-            vi_chn_attr.enPixelFormat =
-                recamera_cvi_sys::PIXEL_FORMAT_E::PIXEL_FORMAT_NV21;
+            vi_chn_attr.enPixelFormat = recamera_cvi_sys::PIXEL_FORMAT_E::PIXEL_FORMAT_NV21;
 
             let rc = self
                 .libs
@@ -249,8 +248,7 @@ impl Camera {
             let mut vpss_grp_attr: recamera_cvi_sys::VPSS_GRP_ATTR_S = std::mem::zeroed();
             vpss_grp_attr.u32MaxW = w;
             vpss_grp_attr.u32MaxH = h;
-            vpss_grp_attr.enPixelFormat =
-                recamera_cvi_sys::PIXEL_FORMAT_E::PIXEL_FORMAT_NV21;
+            vpss_grp_attr.enPixelFormat = recamera_cvi_sys::PIXEL_FORMAT_E::PIXEL_FORMAT_NV21;
 
             let rc = self
                 .libs
@@ -358,7 +356,9 @@ impl Camera {
             };
 
             // Release the frame back to the hardware
-            let _ = self.libs.cvi_vpss_release_chn_frame(0, vpss_chn, &frame_info);
+            let _ = self
+                .libs
+                .cvi_vpss_release_chn_frame(0, vpss_chn, &frame_info);
 
             Ok(Frame {
                 data: FrameData {

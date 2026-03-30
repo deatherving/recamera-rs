@@ -148,8 +148,8 @@ impl Engine {
         let path_str = path.to_str().ok_or_else(|| {
             Error::Inference(format!("invalid path encoding: {}", path.display()))
         })?;
-        let c_path = CString::new(path_str)
-            .map_err(|e| Error::Inference(format!("invalid path: {e}")))?;
+        let c_path =
+            CString::new(path_str).map_err(|e| Error::Inference(format!("invalid path: {e}")))?;
 
         let mut handle: recamera_cvi_sys::CVI_MODEL_HANDLE = std::ptr::null_mut();
 
@@ -251,9 +251,7 @@ pub struct Model {
 
 impl std::fmt::Debug for Model {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Model")
-            .field("info", &self.info)
-            .finish()
+        f.debug_struct("Model").field("info", &self.info).finish()
     }
 }
 
@@ -303,9 +301,7 @@ impl Model {
                 )
                 .map_err(|e| Error::Inference(format!("Forward symbol: {e}")))?;
             if rc != 0 {
-                return Err(Error::Inference(format!(
-                    "CVI_NN_Forward failed (rc={rc})"
-                )));
+                return Err(Error::Inference(format!("CVI_NN_Forward failed (rc={rc})")));
             }
 
             // Read output tensors
