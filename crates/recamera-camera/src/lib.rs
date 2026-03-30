@@ -26,6 +26,8 @@ use recamera_cvi_sys::CviLibs;
 ///
 /// Each channel corresponds to a VPSS output group on the CVI pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
 pub enum Channel {
     /// CH0 -- raw RGB888 output from the ISP/VPSS.
     Raw,
@@ -58,8 +60,11 @@ impl Channel {
 /// Configuration for the camera pipeline.
 ///
 /// Use the [`Default`] implementation for a sensible starting point
-/// (1920x1080, 30 fps, JPEG channel).
+/// (1920x1080, 30 fps, JPEG channel). Can be loaded from a TOML file
+/// when the `serde` feature is enabled.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(default))]
 pub struct CameraConfig {
     /// Capture resolution (width x height in pixels).
     pub resolution: Resolution,

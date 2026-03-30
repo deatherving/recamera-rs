@@ -26,6 +26,33 @@ let frame = camera.capture()?;
 println!("Captured {}x{} frame", frame.width(), frame.height());
 ```
 
+### Load camera config from a file
+
+Enable the `serde` feature to load configuration from TOML:
+
+```toml
+# Cargo.toml
+[dependencies]
+recamera = { git = "https://github.com/deatherving/recamera-rs", features = ["camera", "config", "serde"] }
+```
+
+```toml
+# camera.toml
+[camera]
+width = 1280
+height = 720
+fps = 15
+channel = "jpeg"
+```
+
+```rust
+use recamera::camera::{Camera, CameraConfig};
+use std::path::Path;
+
+let config: CameraConfig = recamera::config::load(Path::new("camera.toml"))?;
+let mut camera = Camera::new(config)?;
+```
+
 ### Run inference on a .cvimodel
 
 ```rust
@@ -64,6 +91,7 @@ match output {
 | `logging` | Logging utilities                        | Yes     |
 | `config`  | Configuration loading and validation     | Yes     |
 | `system`  | System and device information utilities  | Yes     |
+| `serde`   | Serialization support for config types   | No      |
 | `full`    | Enables all features                     | No      |
 
 ## Crates

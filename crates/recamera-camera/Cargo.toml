@@ -10,3 +10,8 @@ rust-version.workspace = true
 [dependencies]
 recamera-core = { path = "../recamera-core" }
 recamera-cvi-sys = { path = "../recamera-cvi-sys" }
+serde = { version = "1", features = ["derive"], optional = true }
+
+[features]
+default = []
+serde = ["dep:serde", "recamera-core/serde"]

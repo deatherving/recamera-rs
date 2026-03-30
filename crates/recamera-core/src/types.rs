@@ -2,6 +2,8 @@
 
 /// Pixel / encoding format of an image or video frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
 pub enum ImageFormat {
     /// 24-bit RGB, 8 bits per channel, packed.
     Rgb888,
@@ -15,6 +17,7 @@ pub enum ImageFormat {
 
 /// A width/height pair describing an image or video resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Resolution {
     /// Width in pixels.
     pub width: u32,
