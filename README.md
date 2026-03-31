@@ -137,7 +137,7 @@ rustup target add riscv64gc-unknown-linux-musl
 
 ### Step 2: Install the RISC-V cross-compilation toolchain
 
-The [Sophgo host-tools](https://github.com/sophgo/host-tools) GCC (10.2.0) shipped with the reCamera SDK is too old for Rust 1.85+ — its binutils cannot handle the RISC-V ISA extensions that LLVM 19 emits. Use the [riscv-collab toolchain](https://github.com/riscv-collab/riscv-gnu-toolchain/releases) (binutils 2.39+) instead.
+The [Sophgo host-tools](https://github.com/sophgo/host-tools) GCC (10.2.0) (referenced in the [reCamera C/C++ development wiki](https://wiki.seeedstudio.com/recamera_develop_with_c_cpp/)) shipped with the reCamera SDK is too old for Rust 1.85+ — its binutils cannot handle the RISC-V ISA extensions that LLVM 19 emits. Use the [riscv-collab toolchain](https://github.com/riscv-collab/riscv-gnu-toolchain/releases) (binutils 2.39+) instead.
 
 ```bash
 wget https://github.com/riscv-collab/riscv-gnu-toolchain/releases/download/2026.03.28/riscv64-musl-ubuntu-22.04-gcc.tar.xz
