@@ -97,6 +97,10 @@ The `.cvimodel` file must be pre-converted from ONNX using Sophgo's offline tool
 | `serde`   | Serialization support for config types   | No      |
 | `full`    | Enables all features                     | No      |
 
+## Versioning
+
+This project follows [Semantic Versioning](https://semver.org/). While the SDK is pre-1.0, minor version bumps may include breaking changes.
+
 ## Crates
 
 | Crate              | Description                                            |
