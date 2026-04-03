@@ -1,6 +1,6 @@
 # recamera-rs
 
-A Rust SDK for [Seeed reCamera](https://wiki.seeedstudio.com/recamera/) -- camera capture, local inference, serial I/O, storage, and system utilities for edge vision applications on the SG2002 SoC.
+A Rust SDK for [Seeed Studio reCamera](https://www.seeedstudio.com/recamera) -- camera capture, local inference, serial I/O, storage, and system utilities for edge vision applications on the SG2002 SoC.
 
 > This is a community project and is not affiliated with or officially maintained by Seeed Studio.
 
@@ -27,12 +27,12 @@ height = 720
 
 All fields are optional and fall back to defaults if omitted:
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `fps` | integer | `30` | Target frame rate in frames per second |
-| `channel` | string | `"jpeg"` | Video channel: `"raw"` (RGB888), `"jpeg"`, or `"h264"` |
-| `resolution.width` | integer | `1920` | Capture width in pixels |
-| `resolution.height` | integer | `1080` | Capture height in pixels |
+| Field               | Type    | Default  | Description                                            |
+| ------------------- | ------- | -------- | ------------------------------------------------------ |
+| `fps`               | integer | `30`     | Target frame rate in frames per second                 |
+| `channel`           | string  | `"jpeg"` | Video channel: `"raw"` (RGB888), `"jpeg"`, or `"h264"` |
+| `resolution.width`  | integer | `1920`   | Capture width in pixels                                |
+| `resolution.height` | integer | `1080`   | Capture height in pixels                               |
 
 Capture a frame:
 
@@ -84,18 +84,18 @@ The `.cvimodel` file must be pre-converted from ONNX using Sophgo's offline tool
 
 ## Features
 
-| Feature   | Description                              | Default |
-|-----------|------------------------------------------|---------|
-| `camera`  | Camera capture and frame handling        | No      |
-| `infer`   | Local inference engine (.cvimodel)       | No      |
-| `uart`    | UART / serial communication              | No      |
-| `rs485`   | RS-485 helpers (enables `uart`)          | No      |
-| `storage` | Image and file storage utilities         | No      |
-| `logging` | Logging utilities                        | Yes     |
-| `config`  | Configuration loading and validation     | Yes     |
-| `system`  | System and device information utilities  | Yes     |
-| `serde`   | Serialization support for config types   | No      |
-| `full`    | Enables all features                     | No      |
+| Feature   | Description                             | Default |
+| --------- | --------------------------------------- | ------- |
+| `camera`  | Camera capture and frame handling       | No      |
+| `infer`   | Local inference engine (.cvimodel)      | No      |
+| `uart`    | UART / serial communication             | No      |
+| `rs485`   | RS-485 helpers (enables `uart`)         | No      |
+| `storage` | Image and file storage utilities        | No      |
+| `logging` | Logging utilities                       | Yes     |
+| `config`  | Configuration loading and validation    | Yes     |
+| `system`  | System and device information utilities | Yes     |
+| `serde`   | Serialization support for config types  | No      |
+| `full`    | Enables all features                    | No      |
 
 ## Versioning
 
@@ -103,25 +103,26 @@ This project follows [Semantic Versioning](https://semver.org/). While the SDK i
 
 ## Crates
 
-| Crate              | Description                                            |
-|--------------------|--------------------------------------------------------|
-| `recamera`         | Facade -- re-exports subcrates based on feature flags  |
-| `recamera-core`    | Shared types, errors, and traits                       |
-| `recamera-camera`  | Camera capture via CVI MPI (VI/VPSS/VENC)              |
-| `recamera-infer`   | NPU inference for .cvimodel files                      |
-| `recamera-cvi-sys` | FFI bindings and runtime loader for SG2002 CVI libs    |
-| `recamera-uart`    | UART / serial communication                            |
-| `recamera-rs485`   | RS-485 helpers built on UART                           |
-| `recamera-storage` | Image and file storage utilities                       |
-| `recamera-logging` | Logging utilities (tracing)                            |
-| `recamera-config`  | TOML configuration loading (serde)                     |
-| `recamera-system`  | Device info, LED control, system utilities             |
+| Crate              | Description                                           |
+| ------------------ | ----------------------------------------------------- |
+| `recamera`         | Facade -- re-exports subcrates based on feature flags |
+| `recamera-core`    | Shared types, errors, and traits                      |
+| `recamera-camera`  | Camera capture via CVI MPI (VI/VPSS/VENC)             |
+| `recamera-infer`   | NPU inference for .cvimodel files                     |
+| `recamera-cvi-sys` | FFI bindings and runtime loader for SG2002 CVI libs   |
+| `recamera-uart`    | UART / serial communication                           |
+| `recamera-rs485`   | RS-485 helpers built on UART                          |
+| `recamera-storage` | Image and file storage utilities                      |
+| `recamera-logging` | Logging utilities (tracing)                           |
+| `recamera-config`  | TOML configuration loading (serde)                    |
+| `recamera-system`  | Device info, LED control, system utilities            |
 
 ## How It Works
 
 The vendor C libraries (camera, video, NPU inference) are loaded at **runtime** on the reCamera device using `dlopen`. No compile-time linking or SDK download is needed to build your application.
 
 `recamera-cvi-sys` provides:
+
 - Type definitions, structs, enums, and constants generated from the SDK headers
 - A runtime loader (`CviLibs`) that finds and loads the vendor `.so` libraries on the device
 
