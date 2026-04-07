@@ -8,6 +8,7 @@
 //! needed when the code runs on a reCamera device.
 
 use libloading::Library;
+use libloading::os::unix::{Library as UnixLibrary, RTLD_GLOBAL, RTLD_NOW};
 use std::path::Path;
 
 use crate::bindings::*;
@@ -56,14 +57,16 @@ fn load_library(name: &str) -> Result<Library, libloading::Error> {
     let mut last_err = None;
     for dir in LIB_SEARCH_PATHS {
         let path = Path::new(dir).join(name);
-        match unsafe { Library::new(&path) } {
-            Ok(lib) => return Ok(lib),
+        match unsafe { UnixLibrary::open(Some(&path), RTLD_NOW | RTLD_GLOBAL) } {
+            Ok(lib) => return Ok(lib.into()),
             Err(e) => last_err = Some(e),
         }
     }
     // If none of the paths worked, try the bare name and let the dynamic
     // linker resolve it via LD_LIBRARY_PATH / system defaults.
-    unsafe { Library::new(name) }.map_err(|e| last_err.unwrap_or(e))
+    unsafe { UnixLibrary::open(Some(name.as_ref()), RTLD_NOW | RTLD_GLOBAL) }
+        .map(Library::from)
+        .map_err(|e| last_err.unwrap_or(e))
 }
 
 impl CviLibs {
