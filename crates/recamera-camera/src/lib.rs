@@ -17,9 +17,10 @@
 //! ```
 
 use std::mem::MaybeUninit;
+use std::sync::Arc;
 
 use recamera_core::{Error, FrameData, ImageFormat, Resolution, Result};
-use recamera_cvi_sys;
+use recamera_cvi_sys::CviLibs;
 
 /// Video channel selector.
 ///
@@ -132,44 +133,67 @@ fn check_cvi(rc: i32, context: &str) -> Result<()> {
 /// Camera handle that wraps the CVI MPI video pipeline.
 ///
 /// Manages the full Sensor -> VI -> ISP -> VPSS -> VENC pipeline.
-/// The vendor shared libraries are linked at compile time and loaded by the
-/// device's dynamic linker at startup.
+/// The vendor shared libraries are loaded at runtime on the reCamera device.
 ///
 /// Create one with [`Camera::new`], then call [`Camera::start_stream`] before
 /// capturing frames with [`Camera::capture`].
-#[derive(Debug)]
 pub struct Camera {
     config: CameraConfig,
+    libs: Arc<CviLibs>,
     streaming: bool,
+}
+
+impl std::fmt::Debug for Camera {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Camera")
+            .field("config", &self.config)
+            .field("streaming", &self.streaming)
+            .finish()
+    }
 }
 
 impl Camera {
     /// Create a new camera handle with the given configuration.
     ///
-    /// Initializes the CVI system and video buffer pools. This must be called
-    /// on the reCamera device where the vendor `.so` files are installed.
+    /// Loads the CVI vendor libraries and initializes the system and video
+    /// buffer pools. This must be called on the reCamera device where the
+    /// vendor `.so` files are installed.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Camera`] if system initialization fails.
+    /// Returns [`Error::Camera`] if the vendor libraries cannot be loaded
+    /// or if system initialization fails.
     pub fn new(config: CameraConfig) -> Result<Self> {
+        let libs = CviLibs::load()
+            .map_err(|e| Error::Camera(format!("failed to load CVI libraries: {e}")))?;
+
+        // Initialize VB and SYS
         unsafe {
             let mut vb_config: recamera_cvi_sys::VB_CONFIG_S = std::mem::zeroed();
             vb_config.u32MaxPoolCnt = 1;
             vb_config.astCommPool[0].u32BlkSize =
-                config.resolution.width * config.resolution.height * 3;
+                config.resolution.width * config.resolution.height * 3; // RGB888 worst case
             vb_config.astCommPool[0].u32BlkCnt = 4;
 
-            check_cvi(
-                recamera_cvi_sys::CVI_VB_SetConfig(&vb_config),
-                "CVI_VB_SetConfig",
-            )?;
-            check_cvi(recamera_cvi_sys::CVI_VB_Init(), "CVI_VB_Init")?;
-            check_cvi(recamera_cvi_sys::CVI_SYS_Init(), "CVI_SYS_Init")?;
+            let rc = libs
+                .cvi_vb_set_config(&vb_config)
+                .map_err(|e| Error::Camera(format!("VB_SetConfig symbol: {e}")))?;
+            check_cvi(rc, "CVI_VB_SetConfig")?;
+
+            let rc = libs
+                .cvi_vb_init()
+                .map_err(|e| Error::Camera(format!("VB_Init symbol: {e}")))?;
+            check_cvi(rc, "CVI_VB_Init")?;
+
+            let rc = libs
+                .cvi_sys_init()
+                .map_err(|e| Error::Camera(format!("SYS_Init symbol: {e}")))?;
+            check_cvi(rc, "CVI_SYS_Init")?;
         }
 
         Ok(Self {
             config,
+            libs: Arc::new(libs),
             streaming: false,
         })
     }
@@ -196,28 +220,34 @@ impl Camera {
             vi_dev_attr.stSize.u32Width = w;
             vi_dev_attr.stSize.u32Height = h;
 
-            check_cvi(
-                recamera_cvi_sys::CVI_VI_SetDevAttr(0, &vi_dev_attr),
-                "CVI_VI_SetDevAttr",
-            )?;
-            check_cvi(
-                recamera_cvi_sys::CVI_VI_EnableDev(0),
-                "CVI_VI_EnableDev",
-            )?;
+            let rc = self
+                .libs
+                .cvi_vi_set_dev_attr(0, &vi_dev_attr)
+                .map_err(|e| Error::Camera(format!("VI_SetDevAttr symbol: {e}")))?;
+            check_cvi(rc, "CVI_VI_SetDevAttr")?;
+
+            let rc = self
+                .libs
+                .cvi_vi_enable_dev(0)
+                .map_err(|e| Error::Camera(format!("VI_EnableDev symbol: {e}")))?;
+            check_cvi(rc, "CVI_VI_EnableDev")?;
 
             let mut vi_chn_attr: recamera_cvi_sys::VI_CHN_ATTR_S = std::mem::zeroed();
             vi_chn_attr.stSize.u32Width = w;
             vi_chn_attr.stSize.u32Height = h;
             vi_chn_attr.enPixelFormat = recamera_cvi_sys::PIXEL_FORMAT_E::PIXEL_FORMAT_NV21;
 
-            check_cvi(
-                recamera_cvi_sys::CVI_VI_SetChnAttr(0, 0, &mut vi_chn_attr),
-                "CVI_VI_SetChnAttr",
-            )?;
-            check_cvi(
-                recamera_cvi_sys::CVI_VI_EnableChn(0, 0),
-                "CVI_VI_EnableChn",
-            )?;
+            let rc = self
+                .libs
+                .cvi_vi_set_chn_attr(0, 0, &mut vi_chn_attr)
+                .map_err(|e| Error::Camera(format!("VI_SetChnAttr symbol: {e}")))?;
+            check_cvi(rc, "CVI_VI_SetChnAttr")?;
+
+            let rc = self
+                .libs
+                .cvi_vi_enable_chn(0, 0)
+                .map_err(|e| Error::Camera(format!("VI_EnableChn symbol: {e}")))?;
+            check_cvi(rc, "CVI_VI_EnableChn")?;
 
             // Setup VPSS group 0, channel based on config
             let mut vpss_grp_attr: recamera_cvi_sys::VPSS_GRP_ATTR_S = std::mem::zeroed();
@@ -225,10 +255,11 @@ impl Camera {
             vpss_grp_attr.u32MaxH = h;
             vpss_grp_attr.enPixelFormat = recamera_cvi_sys::PIXEL_FORMAT_E::PIXEL_FORMAT_NV21;
 
-            check_cvi(
-                recamera_cvi_sys::CVI_VPSS_CreateGrp(0, &vpss_grp_attr),
-                "CVI_VPSS_CreateGrp",
-            )?;
+            let rc = self
+                .libs
+                .cvi_vpss_create_grp(0, &vpss_grp_attr)
+                .map_err(|e| Error::Camera(format!("VPSS_CreateGrp symbol: {e}")))?;
+            check_cvi(rc, "CVI_VPSS_CreateGrp")?;
 
             let vpss_chn = self.config.channel.vpss_chn();
             let mut vpss_chn_attr: recamera_cvi_sys::VPSS_CHN_ATTR_S = std::mem::zeroed();
@@ -239,18 +270,23 @@ impl Camera {
                 _ => recamera_cvi_sys::PIXEL_FORMAT_E::PIXEL_FORMAT_NV21,
             };
 
-            check_cvi(
-                recamera_cvi_sys::CVI_VPSS_SetChnAttr(0, vpss_chn, &vpss_chn_attr),
-                "CVI_VPSS_SetChnAttr",
-            )?;
-            check_cvi(
-                recamera_cvi_sys::CVI_VPSS_EnableChn(0, vpss_chn),
-                "CVI_VPSS_EnableChn",
-            )?;
-            check_cvi(
-                recamera_cvi_sys::CVI_VPSS_StartGrp(0),
-                "CVI_VPSS_StartGrp",
-            )?;
+            let rc = self
+                .libs
+                .cvi_vpss_set_chn_attr(0, vpss_chn, &vpss_chn_attr)
+                .map_err(|e| Error::Camera(format!("VPSS_SetChnAttr symbol: {e}")))?;
+            check_cvi(rc, "CVI_VPSS_SetChnAttr")?;
+
+            let rc = self
+                .libs
+                .cvi_vpss_enable_chn(0, vpss_chn)
+                .map_err(|e| Error::Camera(format!("VPSS_EnableChn symbol: {e}")))?;
+            check_cvi(rc, "CVI_VPSS_EnableChn")?;
+
+            let rc = self
+                .libs
+                .cvi_vpss_start_grp(0)
+                .map_err(|e| Error::Camera(format!("VPSS_StartGrp symbol: {e}")))?;
+            check_cvi(rc, "CVI_VPSS_StartGrp")?;
         }
 
         self.streaming = true;
@@ -273,11 +309,11 @@ impl Camera {
         let vpss_chn = self.config.channel.vpss_chn();
 
         unsafe {
-            let _ = recamera_cvi_sys::CVI_VPSS_StopGrp(0);
-            let _ = recamera_cvi_sys::CVI_VPSS_DisableChn(0, vpss_chn);
-            let _ = recamera_cvi_sys::CVI_VPSS_DestroyGrp(0);
-            let _ = recamera_cvi_sys::CVI_VI_DisableChn(0, 0);
-            let _ = recamera_cvi_sys::CVI_VI_DisableDev(0);
+            let _ = self.libs.cvi_vpss_stop_grp(0);
+            let _ = self.libs.cvi_vpss_disable_chn(0, vpss_chn);
+            let _ = self.libs.cvi_vpss_destroy_grp(0);
+            let _ = self.libs.cvi_vi_disable_chn(0, 0);
+            let _ = self.libs.cvi_vi_disable_dev(0);
         }
 
         self.streaming = false;
@@ -304,10 +340,11 @@ impl Camera {
         unsafe {
             let frame_ptr = frame_info.as_mut_ptr();
 
-            check_cvi(
-                recamera_cvi_sys::CVI_VPSS_GetChnFrame(0, vpss_chn, frame_ptr, 1000),
-                "CVI_VPSS_GetChnFrame",
-            )?;
+            let rc = self
+                .libs
+                .cvi_vpss_get_chn_frame(0, vpss_chn, frame_ptr, 1000)
+                .map_err(|e| Error::Camera(format!("VPSS_GetChnFrame symbol: {e}")))?;
+            check_cvi(rc, "CVI_VPSS_GetChnFrame")?;
 
             let frame_info = frame_info.assume_init();
             let vframe = &frame_info.stVFrame;
@@ -324,7 +361,9 @@ impl Camera {
             };
 
             // Release the frame back to the hardware
-            let _ = recamera_cvi_sys::CVI_VPSS_ReleaseChnFrame(0, vpss_chn, &frame_info);
+            let _ = self
+                .libs
+                .cvi_vpss_release_chn_frame(0, vpss_chn, &frame_info);
 
             Ok(Frame {
                 data: FrameData {
@@ -355,8 +394,8 @@ impl Drop for Camera {
             let _ = self.stop_stream();
         }
         unsafe {
-            let _ = recamera_cvi_sys::CVI_SYS_Exit();
-            let _ = recamera_cvi_sys::CVI_VB_Exit();
+            let _ = self.libs.cvi_sys_exit();
+            let _ = self.libs.cvi_vb_exit();
         }
     }
 }

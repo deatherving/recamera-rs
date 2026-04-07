@@ -47,7 +47,7 @@ let frame = camera.capture()?;
 println!("Captured {}x{} frame", frame.width(), frame.height());
 ```
 
-Requires the [reCamera-OS SDK](https://github.com/Seeed-Studio/reCamera-OS/releases) for cross-compilation (see [Cross-Compiling](#cross-compiling-for-recamera) below).
+No SDK download required. The vendor libraries are loaded at runtime on the reCamera device.
 
 ## Camera + Inference Pipeline
 
@@ -119,14 +119,14 @@ This project follows [Semantic Versioning](https://semver.org/). While the SDK i
 
 ## How It Works
 
-The vendor C libraries (camera, video, NPU inference) are linked at **compile time** against the SDK copies in `sdk/sg2002_recamera_emmc/cvi_mpi/lib/`. At runtime, the device's dynamic linker loads the shared libraries and resolves transitive dependencies (e.g. `libatomic.so`) automatically.
+The vendor C libraries (camera, video, NPU inference) are loaded at **runtime** on the reCamera device using `dlopen` with `RTLD_LAZY | RTLD_GLOBAL`. No compile-time linking or SDK download is needed to build your application.
 
 `recamera-cvi-sys` provides:
 
 - Type definitions, structs, enums, and constants generated from the SDK headers
-- `extern "C"` declarations for all vendor functions (linked via `build.rs`)
+- A runtime loader (`CviLibs`) that finds and loads the vendor `.so` libraries on the device
 
-The higher-level crates (`recamera-camera`, `recamera-infer`) call these functions directly through safe Rust wrappers.
+The higher-level crates (`recamera-camera`, `recamera-infer`) wrap the loader with safe Rust APIs.
 
 ## Cross-Compiling for reCamera
 
@@ -155,18 +155,9 @@ Add the toolchain to your `PATH` (add this to `~/.bashrc` to make it permanent):
 export PATH=$HOME/riscv-toolchain/riscv/bin:$PATH
 ```
 
-### Step 3: Download the reCamera-OS SDK
+### Step 3: Configure Cargo in your project
 
-Download the SDK matching your device's firmware version from [reCamera-OS releases](https://github.com/Seeed-Studio/reCamera-OS/releases):
-
-```bash
-wget https://github.com/Seeed-Studio/reCamera-OS/releases/download/0.2.1/sg2002_reCamera_0.2.1_emmc_sdk.tar.gz
-tar xzf sg2002_reCamera_0.2.1_emmc_sdk.tar.gz
-```
-
-### Step 4: Configure Cargo in your project
-
-In your own project (not the SDK), create `.cargo/config.toml`:
+In your own project (not the SDK), create `.cargo/config.toml` to set the default target and linker:
 
 ```toml
 [build]
@@ -174,25 +165,21 @@ target = "riscv64gc-unknown-linux-musl"
 
 [target.riscv64gc-unknown-linux-musl]
 linker = "riscv64-unknown-linux-musl-gcc"
-rustflags = ["-C", "link-arg=-Wl,--allow-shlib-undefined"]
 ```
 
-The `--allow-shlib-undefined` flag tells the linker not to resolve transitive dependencies of the vendor shared libraries — those are resolved at runtime on the device. This is the default on glibc-based linkers but must be set explicitly with the musl toolchain.
+### Step 4: Build your project
 
-### Step 5: Build your project
-
-Set `CVI_MPI_LIB_DIR` to point at the SDK's vendor libraries, then build:
+From your project directory, run:
 
 ```bash
-export CVI_MPI_LIB_DIR=/path/to/sg2002_recamera_emmc/cvi_mpi/lib
 cargo build --release
 ```
 
-This compiles your application (which pulls in `recamera-rs` as a dependency) for the reCamera's RISC-V target.
+This compiles your application (which pulls in `recamera-rs` as a dependency) for the reCamera's RISC-V target. The SDK itself does not need to be built separately — Cargo fetches and compiles it automatically.
 
 Output binary: `target/riscv64gc-unknown-linux-musl/release/<your-crate-name>`
 
-### Step 6: Deploy to device
+### Step 5: Deploy to device
 
 ```bash
 scp target/riscv64gc-unknown-linux-musl/release/<binary> recamera@<device-ip>:/home/recamera/

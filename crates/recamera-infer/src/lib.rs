@@ -19,9 +19,10 @@
 
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use recamera_core::{Error, FrameData, Result};
-use recamera_cvi_sys;
+use recamera_cvi_sys::CviLibs;
 
 /// Shape of a single tensor (input or output).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,24 +92,35 @@ pub enum Output {
 
 /// CVI NPU inference engine.
 ///
-/// Provides model loading for `.cvimodel` files. The CVI runtime library is
-/// linked at compile time and loaded by the device's dynamic linker at startup.
-///
+/// Loads the CVI runtime library at runtime and provides model loading.
 /// Use [`Engine::new`] to create an instance, then [`Engine::load_model`]
 /// to load a `.cvimodel` file for inference.
-#[derive(Debug)]
 pub struct Engine {
-    _private: (),
+    libs: Arc<CviLibs>,
+}
+
+impl std::fmt::Debug for Engine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Engine").finish()
+    }
 }
 
 impl Engine {
     /// Create a new inference engine.
     ///
+    /// Loads the CVI runtime library from the device's standard library paths.
+    /// This must be called on the reCamera device where `libcviruntime.so` is
+    /// installed.
+    ///
     /// # Errors
     ///
-    /// Returns [`Error::Inference`] if engine initialization fails.
+    /// Returns [`Error::Inference`] if the vendor libraries cannot be loaded.
     pub fn new() -> Result<Self> {
-        Ok(Self { _private: () })
+        let libs = CviLibs::load()
+            .map_err(|e| Error::Inference(format!("failed to load CVI libraries: {e}")))?;
+        Ok(Self {
+            libs: Arc::new(libs),
+        })
     }
 
     /// Load a `.cvimodel` file and prepare it for inference.
@@ -142,7 +154,10 @@ impl Engine {
         let mut handle: recamera_cvi_sys::CVI_MODEL_HANDLE = std::ptr::null_mut();
 
         unsafe {
-            let rc = recamera_cvi_sys::CVI_NN_RegisterModel(c_path.as_ptr(), &mut handle);
+            let rc = self
+                .libs
+                .cvi_nn_register_model(c_path.as_ptr(), &mut handle)
+                .map_err(|e| Error::Inference(format!("RegisterModel symbol: {e}")))?;
             if rc != 0 {
                 return Err(Error::Inference(format!(
                     "CVI_NN_RegisterModel failed (rc={rc})"
@@ -155,15 +170,18 @@ impl Engine {
             let mut outputs: *mut recamera_cvi_sys::CVI_TENSOR = std::ptr::null_mut();
             let mut output_num: i32 = 0;
 
-            let rc = recamera_cvi_sys::CVI_NN_GetInputOutputTensors(
-                handle,
-                &mut inputs,
-                &mut input_num,
-                &mut outputs,
-                &mut output_num,
-            );
+            let rc = self
+                .libs
+                .cvi_nn_get_input_output_tensors(
+                    handle,
+                    &mut inputs,
+                    &mut input_num,
+                    &mut outputs,
+                    &mut output_num,
+                )
+                .map_err(|e| Error::Inference(format!("GetInputOutputTensors symbol: {e}")))?;
             if rc != 0 {
-                let _ = recamera_cvi_sys::CVI_NN_CleanupModel(handle);
+                let _ = self.libs.cvi_nn_cleanup_model(handle);
                 return Err(Error::Inference(format!(
                     "CVI_NN_GetInputOutputTensors failed (rc={rc})"
                 )));
@@ -171,7 +189,10 @@ impl Engine {
 
             // Extract input shape
             let input_shape = if input_num > 0 && !inputs.is_null() {
-                let shape = recamera_cvi_sys::CVI_NN_TensorShape(inputs);
+                let shape = self
+                    .libs
+                    .cvi_nn_tensor_shape(inputs)
+                    .map_err(|e| Error::Inference(format!("TensorShape symbol: {e}")))?;
                 let dims: Vec<usize> = shape.dim[..shape.dim_size]
                     .iter()
                     .map(|&d| d as usize)
@@ -185,7 +206,10 @@ impl Engine {
             let mut output_shapes = Vec::new();
             for i in 0..output_num {
                 let tensor = outputs.add(i as usize);
-                let shape = recamera_cvi_sys::CVI_NN_TensorShape(tensor);
+                let shape = self
+                    .libs
+                    .cvi_nn_tensor_shape(tensor)
+                    .map_err(|e| Error::Inference(format!("TensorShape symbol: {e}")))?;
                 let dims: Vec<usize> = shape.dim[..shape.dim_size]
                     .iter()
                     .map(|&d| d as usize)
@@ -204,6 +228,7 @@ impl Engine {
                 input_num,
                 outputs,
                 output_num,
+                libs: Arc::clone(&self.libs),
             })
         }
     }
@@ -221,6 +246,7 @@ pub struct Model {
     input_num: i32,
     outputs: *mut recamera_cvi_sys::CVI_TENSOR,
     output_num: i32,
+    libs: Arc<CviLibs>,
 }
 
 impl std::fmt::Debug for Model {
@@ -245,9 +271,15 @@ impl Model {
         unsafe {
             // Copy input data into the input tensor
             if self.input_num > 0 && !self.inputs.is_null() {
-                let tensor_ptr = recamera_cvi_sys::CVI_NN_TensorPtr(self.inputs);
+                let tensor_ptr = self
+                    .libs
+                    .cvi_nn_tensor_ptr(self.inputs)
+                    .map_err(|e| Error::Inference(format!("TensorPtr symbol: {e}")))?;
                 if !tensor_ptr.is_null() {
-                    let tensor_count = recamera_cvi_sys::CVI_NN_TensorCount(self.inputs);
+                    let tensor_count = self
+                        .libs
+                        .cvi_nn_tensor_count(self.inputs)
+                        .map_err(|e| Error::Inference(format!("TensorCount symbol: {e}")))?;
                     let copy_len = input.data.len().min(tensor_count);
                     std::ptr::copy_nonoverlapping(
                         input.data.as_ptr(),
@@ -258,13 +290,16 @@ impl Model {
             }
 
             // Run forward pass
-            let rc = recamera_cvi_sys::CVI_NN_Forward(
-                self.handle,
-                self.inputs,
-                self.input_num,
-                self.outputs,
-                self.output_num,
-            );
+            let rc = self
+                .libs
+                .cvi_nn_forward(
+                    self.handle,
+                    self.inputs,
+                    self.input_num,
+                    self.outputs,
+                    self.output_num,
+                )
+                .map_err(|e| Error::Inference(format!("Forward symbol: {e}")))?;
             if rc != 0 {
                 return Err(Error::Inference(format!("CVI_NN_Forward failed (rc={rc})")));
             }
@@ -273,8 +308,14 @@ impl Model {
             let mut raw_outputs = Vec::new();
             for i in 0..self.output_num {
                 let tensor = self.outputs.add(i as usize);
-                let ptr = recamera_cvi_sys::CVI_NN_TensorPtr(tensor);
-                let count = recamera_cvi_sys::CVI_NN_TensorCount(tensor);
+                let ptr = self
+                    .libs
+                    .cvi_nn_tensor_ptr(tensor)
+                    .map_err(|e| Error::Inference(format!("TensorPtr symbol: {e}")))?;
+                let count = self
+                    .libs
+                    .cvi_nn_tensor_count(tensor)
+                    .map_err(|e| Error::Inference(format!("TensorCount symbol: {e}")))?;
 
                 if !ptr.is_null() && count > 0 {
                     let float_ptr = ptr as *const f32;
@@ -293,7 +334,7 @@ impl Model {
 impl Drop for Model {
     fn drop(&mut self) {
         unsafe {
-            let _ = recamera_cvi_sys::CVI_NN_CleanupModel(self.handle);
+            let _ = self.libs.cvi_nn_cleanup_model(self.handle);
         }
     }
 }

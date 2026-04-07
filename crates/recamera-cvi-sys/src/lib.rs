@@ -1,8 +1,8 @@
 //! FFI bindings for the Sophgo SG2002 CVI vendor libraries.
 //!
-//! This crate provides low-level types, constants, and extern declarations
-//! for the CVI multimedia pipeline libraries shipped in the reCamera-OS SDK.
-//! It covers:
+//! This crate provides low-level types, constants, and a runtime dynamic
+//! loader for the CVI multimedia pipeline libraries shipped in the
+//! reCamera-OS SDK. It covers:
 //!
 //! - **SYS** -- system init, channel binding
 //! - **VB** -- video buffer pool management
@@ -11,12 +11,14 @@
 //! - **VENC** -- video encoding (H.264, H.265, JPEG)
 //! - **NN** -- NPU inference runtime (model loading, tensor I/O, forward pass)
 //!
-//! # Compile-time linking
+//! # Runtime loading
 //!
-//! The vendor `.so` libraries are linked at compile time against the SDK
-//! copies in `sdk/sg2002_recamera_emmc/cvi_mpi/lib/` (see `build.rs`).
-//! At runtime, the device's dynamic linker loads them and resolves any
-//! transitive dependencies (e.g. `libatomic.so`) automatically.
+//! The vendor `.so` libraries are loaded at runtime via `dlopen` with
+//! `RTLD_LAZY | RTLD_GLOBAL`. This is required on musl-based systems
+//! (like reCamera-OS) where the vendor libraries lack proper `DT_NEEDED`
+//! entries for their transitive dependencies. `RTLD_LAZY` defers symbol
+//! resolution until first use, and `RTLD_GLOBAL` makes each library's
+//! exports visible to subsequently loaded libraries.
 //!
 //! # Regenerating bindings
 //!
@@ -35,4 +37,4 @@ mod bindings;
 pub use bindings::*;
 
 mod loader;
-pub use loader::*;
+pub use loader::CviLibs;
