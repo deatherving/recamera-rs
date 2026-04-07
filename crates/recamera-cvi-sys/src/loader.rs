@@ -64,7 +64,7 @@ fn load_library(name: &str) -> Result<Library, libloading::Error> {
     }
     // If none of the paths worked, try the bare name and let the dynamic
     // linker resolve it via LD_LIBRARY_PATH / system defaults.
-    unsafe { UnixLibrary::open(Some(name.as_ref()), RTLD_NOW | RTLD_GLOBAL) }
+    unsafe { UnixLibrary::open(Some(Path::new(name)), RTLD_NOW | RTLD_GLOBAL) }
         .map(Library::from)
         .map_err(|e| last_err.unwrap_or(e))
 }
