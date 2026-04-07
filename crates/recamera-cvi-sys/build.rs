@@ -29,11 +29,4 @@ fn main() {
     for lib in ["sys", "vi", "vpss", "venc", "cviruntime"] {
         println!("cargo:rustc-link-lib=dylib={lib}");
     }
-
-    // The vendor .so files have transitive dependencies on each other and
-    // on system libraries (libisp, libvo, libatomic, etc.) that are only
-    // present on the device. Tell the linker not to error on unresolved
-    // symbols inside shared libraries — they will be resolved at runtime
-    // by the device's dynamic linker.
-    println!("cargo:rustc-link-arg=-Wl,--allow-shlib-undefined");
 }
