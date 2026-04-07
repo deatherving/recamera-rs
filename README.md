@@ -109,7 +109,7 @@ This project follows [Semantic Versioning](https://semver.org/). While the SDK i
 | `recamera-core`    | Shared types, errors, and traits                      |
 | `recamera-camera`  | Camera capture via CVI MPI (VI/VPSS/VENC)             |
 | `recamera-infer`   | NPU inference for .cvimodel files                     |
-| `recamera-cvi-sys` | FFI bindings and runtime loader for SG2002 CVI libs   |
+| `recamera-cvi-sys` | FFI bindings for SG2002 CVI libs (compile-time linked) |
 | `recamera-uart`    | UART / serial communication                           |
 | `recamera-rs485`   | RS-485 helpers built on UART                          |
 | `recamera-storage` | Image and file storage utilities                      |
@@ -119,14 +119,14 @@ This project follows [Semantic Versioning](https://semver.org/). While the SDK i
 
 ## How It Works
 
-The vendor C libraries (camera, video, NPU inference) are loaded at **runtime** on the reCamera device using `dlopen`. No compile-time linking or SDK download is needed to build your application.
+The vendor C libraries (camera, video, NPU inference) are linked at **compile time** against the SDK copies in `sdk/sg2002_recamera_emmc/cvi_mpi/lib/`. At runtime, the device's dynamic linker loads the shared libraries and resolves transitive dependencies (e.g. `libatomic.so`) automatically.
 
 `recamera-cvi-sys` provides:
 
 - Type definitions, structs, enums, and constants generated from the SDK headers
-- A runtime loader (`CviLibs`) that finds and loads the vendor `.so` libraries on the device
+- `extern "C"` declarations for all vendor functions (linked via `build.rs`)
 
-The higher-level crates (`recamera-camera`, `recamera-infer`) wrap the loader with safe Rust APIs.
+The higher-level crates (`recamera-camera`, `recamera-infer`) call these functions directly through safe Rust wrappers.
 
 ## Cross-Compiling for reCamera
 

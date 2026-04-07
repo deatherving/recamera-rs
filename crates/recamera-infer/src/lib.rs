@@ -19,10 +19,9 @@
 
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use recamera_core::{Error, FrameData, Result};
-use recamera_cvi_sys::CviLibs;
+use recamera_cvi_sys;
 
 /// Shape of a single tensor (input or output).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,35 +91,24 @@ pub enum Output {
 
 /// CVI NPU inference engine.
 ///
-/// Loads the CVI runtime library at runtime and provides model loading.
+/// Provides model loading for `.cvimodel` files. The CVI runtime library is
+/// linked at compile time and loaded by the device's dynamic linker at startup.
+///
 /// Use [`Engine::new`] to create an instance, then [`Engine::load_model`]
 /// to load a `.cvimodel` file for inference.
+#[derive(Debug)]
 pub struct Engine {
-    libs: Arc<CviLibs>,
-}
-
-impl std::fmt::Debug for Engine {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Engine").finish()
-    }
+    _private: (),
 }
 
 impl Engine {
     /// Create a new inference engine.
     ///
-    /// Loads the CVI runtime library from the device's standard library paths.
-    /// This must be called on the reCamera device where `libcviruntime.so` is
-    /// installed.
-    ///
     /// # Errors
     ///
-    /// Returns [`Error::Inference`] if the vendor libraries cannot be loaded.
+    /// Returns [`Error::Inference`] if engine initialization fails.
     pub fn new() -> Result<Self> {
-        let libs = CviLibs::load()
-            .map_err(|e| Error::Inference(format!("failed to load CVI libraries: {e}")))?;
-        Ok(Self {
-            libs: Arc::new(libs),
-        })
+        Ok(Self { _private: () })
     }
 
     /// Load a `.cvimodel` file and prepare it for inference.
@@ -154,10 +142,7 @@ impl Engine {
         let mut handle: recamera_cvi_sys::CVI_MODEL_HANDLE = std::ptr::null_mut();
 
         unsafe {
-            let rc = self
-                .libs
-                .cvi_nn_register_model(c_path.as_ptr(), &mut handle)
-                .map_err(|e| Error::Inference(format!("RegisterModel symbol: {e}")))?;
+            let rc = recamera_cvi_sys::CVI_NN_RegisterModel(c_path.as_ptr(), &mut handle);
             if rc != 0 {
                 return Err(Error::Inference(format!(
                     "CVI_NN_RegisterModel failed (rc={rc})"
@@ -170,18 +155,15 @@ impl Engine {
             let mut outputs: *mut recamera_cvi_sys::CVI_TENSOR = std::ptr::null_mut();
             let mut output_num: i32 = 0;
 
-            let rc = self
-                .libs
-                .cvi_nn_get_input_output_tensors(
-                    handle,
-                    &mut inputs,
-                    &mut input_num,
-                    &mut outputs,
-                    &mut output_num,
-                )
-                .map_err(|e| Error::Inference(format!("GetInputOutputTensors symbol: {e}")))?;
+            let rc = recamera_cvi_sys::CVI_NN_GetInputOutputTensors(
+                handle,
+                &mut inputs,
+                &mut input_num,
+                &mut outputs,
+                &mut output_num,
+            );
             if rc != 0 {
-                let _ = self.libs.cvi_nn_cleanup_model(handle);
+                let _ = recamera_cvi_sys::CVI_NN_CleanupModel(handle);
                 return Err(Error::Inference(format!(
                     "CVI_NN_GetInputOutputTensors failed (rc={rc})"
                 )));
@@ -189,10 +171,7 @@ impl Engine {
 
             // Extract input shape
             let input_shape = if input_num > 0 && !inputs.is_null() {
-                let shape = self
-                    .libs
-                    .cvi_nn_tensor_shape(inputs)
-                    .map_err(|e| Error::Inference(format!("TensorShape symbol: {e}")))?;
+                let shape = recamera_cvi_sys::CVI_NN_TensorShape(inputs);
                 let dims: Vec<usize> = shape.dim[..shape.dim_size]
                     .iter()
                     .map(|&d| d as usize)
@@ -206,10 +185,7 @@ impl Engine {
             let mut output_shapes = Vec::new();
             for i in 0..output_num {
                 let tensor = outputs.add(i as usize);
-                let shape = self
-                    .libs
-                    .cvi_nn_tensor_shape(tensor)
-                    .map_err(|e| Error::Inference(format!("TensorShape symbol: {e}")))?;
+                let shape = recamera_cvi_sys::CVI_NN_TensorShape(tensor);
                 let dims: Vec<usize> = shape.dim[..shape.dim_size]
                     .iter()
                     .map(|&d| d as usize)
@@ -228,7 +204,6 @@ impl Engine {
                 input_num,
                 outputs,
                 output_num,
-                libs: Arc::clone(&self.libs),
             })
         }
     }
@@ -246,7 +221,6 @@ pub struct Model {
     input_num: i32,
     outputs: *mut recamera_cvi_sys::CVI_TENSOR,
     output_num: i32,
-    libs: Arc<CviLibs>,
 }
 
 impl std::fmt::Debug for Model {
@@ -271,15 +245,9 @@ impl Model {
         unsafe {
             // Copy input data into the input tensor
             if self.input_num > 0 && !self.inputs.is_null() {
-                let tensor_ptr = self
-                    .libs
-                    .cvi_nn_tensor_ptr(self.inputs)
-                    .map_err(|e| Error::Inference(format!("TensorPtr symbol: {e}")))?;
+                let tensor_ptr = recamera_cvi_sys::CVI_NN_TensorPtr(self.inputs);
                 if !tensor_ptr.is_null() {
-                    let tensor_count = self
-                        .libs
-                        .cvi_nn_tensor_count(self.inputs)
-                        .map_err(|e| Error::Inference(format!("TensorCount symbol: {e}")))?;
+                    let tensor_count = recamera_cvi_sys::CVI_NN_TensorCount(self.inputs);
                     let copy_len = input.data.len().min(tensor_count);
                     std::ptr::copy_nonoverlapping(
                         input.data.as_ptr(),
@@ -290,16 +258,13 @@ impl Model {
             }
 
             // Run forward pass
-            let rc = self
-                .libs
-                .cvi_nn_forward(
-                    self.handle,
-                    self.inputs,
-                    self.input_num,
-                    self.outputs,
-                    self.output_num,
-                )
-                .map_err(|e| Error::Inference(format!("Forward symbol: {e}")))?;
+            let rc = recamera_cvi_sys::CVI_NN_Forward(
+                self.handle,
+                self.inputs,
+                self.input_num,
+                self.outputs,
+                self.output_num,
+            );
             if rc != 0 {
                 return Err(Error::Inference(format!("CVI_NN_Forward failed (rc={rc})")));
             }
@@ -308,14 +273,8 @@ impl Model {
             let mut raw_outputs = Vec::new();
             for i in 0..self.output_num {
                 let tensor = self.outputs.add(i as usize);
-                let ptr = self
-                    .libs
-                    .cvi_nn_tensor_ptr(tensor)
-                    .map_err(|e| Error::Inference(format!("TensorPtr symbol: {e}")))?;
-                let count = self
-                    .libs
-                    .cvi_nn_tensor_count(tensor)
-                    .map_err(|e| Error::Inference(format!("TensorCount symbol: {e}")))?;
+                let ptr = recamera_cvi_sys::CVI_NN_TensorPtr(tensor);
+                let count = recamera_cvi_sys::CVI_NN_TensorCount(tensor);
 
                 if !ptr.is_null() && count > 0 {
                     let float_ptr = ptr as *const f32;
@@ -334,7 +293,7 @@ impl Model {
 impl Drop for Model {
     fn drop(&mut self) {
         unsafe {
-            let _ = self.libs.cvi_nn_cleanup_model(self.handle);
+            let _ = recamera_cvi_sys::CVI_NN_CleanupModel(self.handle);
         }
     }
 }
@@ -387,10 +346,6 @@ mod tests {
 
     #[test]
     fn extension_validation_rejects_wrong_extension() {
-        // We can't create a real Engine without the device libraries,
-        // but we can test the validation logic by checking the error.
-        // Engine::new() will fail on non-device machines, so we test
-        // the extension check indirectly through the type system.
         let path = Path::new("/tmp/model.onnx");
         let ext = path.extension().and_then(|e| e.to_str());
         assert_ne!(ext, Some("cvimodel"));
