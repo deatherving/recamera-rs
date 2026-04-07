@@ -16,7 +16,7 @@ use crate::bindings::*;
 ///
 /// These are the standard locations where CVI shared objects are installed
 /// on reCamera-OS.
-const LIB_SEARCH_PATHS: &[&str] = &["/usr/lib/", "/lib/", "/mnt/system/lib/"];
+const LIB_SEARCH_PATHS: &[&str] = &["/usr/lib/", "/lib/", "/mnt/system/lib/", "/mnt/system/usr/lib/"];
 
 /// Holds loaded CVI vendor library handles.
 ///
@@ -70,7 +70,7 @@ impl CviLibs {
     /// Load all five CVI vendor libraries from the standard search paths.
     ///
     /// The libraries are searched in order: `/usr/lib/`, `/lib/`,
-    /// `/mnt/system/lib/`. If none of those contain the library, the
+    /// `/mnt/system/lib/`, `/mnt/system/usr/lib/`. If none of those contain the library, the
     /// system's default dynamic linker search is used as a fallback.
     ///
     /// # Errors
