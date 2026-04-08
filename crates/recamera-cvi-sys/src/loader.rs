@@ -62,6 +62,18 @@ pub struct CviLibs {
     vpss: Library,
     /// Handle to `libvenc.so` (video encoding functions).
     venc: Library,
+    /// Handle to `libisp_algo.so` (ISP algorithm library — must load before libisp.so).
+    _isp_algo: Library,
+    /// Handle to `libae.so` (auto-exposure algorithm).
+    _ae: Library,
+    /// Handle to `libawb.so` (auto-white-balance algorithm).
+    _awb: Library,
+    /// Handle to `libaf.so` (auto-focus algorithm).
+    _af: Library,
+    /// Handle to `libisp.so` (ISP core functions).
+    isp: Library,
+    /// Handle to `libsns_full.so` (all sensor drivers).
+    sns: Library,
     /// Handle to `libcviruntime.so` (NPU inference runtime).
     cviruntime: Library,
 }
@@ -115,6 +127,13 @@ impl CviLibs {
             vi: load_library("libvi.so")?,
             vpss: load_library("libvpss.so")?,
             venc: load_library("libvenc.so")?,
+            // ISP algorithm dependencies must load before libisp.so
+            _isp_algo: load_library("libisp_algo.so")?,
+            _ae: load_library("libae.so")?,
+            _awb: load_library("libawb.so")?,
+            _af: load_library("libaf.so")?,
+            isp: load_library("libisp.so")?,
+            sns: load_library("libsns_full.so")?,
             cviruntime: load_library("libcviruntime.so")?,
         })
     }
@@ -144,6 +163,45 @@ impl CviLibs {
         let func: libloading::Symbol<unsafe extern "C" fn() -> CVI_S32> =
             self.sys.get(b"CVI_SYS_Exit")?;
         Ok(func())
+    }
+
+    /// Set the number of VI devices.
+    ///
+    /// # Safety
+    ///
+    /// Must be called before VI device configuration.
+    pub unsafe fn cvi_vi_set_dev_num(&self, dev_num: CVI_U32) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(CVI_U32) -> CVI_S32> =
+            self.vi.get(b"CVI_VI_SetDevNum")?;
+        Ok(func(dev_num))
+    }
+
+    /// Set the VI-VPSS pipeline mode.
+    ///
+    /// # Safety
+    ///
+    /// `mode` must point to a valid `VI_VPSS_MODE_S`.
+    pub unsafe fn cvi_sys_set_vi_vpss_mode(
+        &self,
+        mode: *const VI_VPSS_MODE_S,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(*const VI_VPSS_MODE_S) -> CVI_S32> =
+            self.sys.get(b"CVI_SYS_SetVIVPSSMode")?;
+        Ok(func(mode))
+    }
+
+    /// Set the VPSS working mode.
+    ///
+    /// # Safety
+    ///
+    /// `mode` must point to a valid `VPSS_MODE_S`.
+    pub unsafe fn cvi_sys_set_vpss_mode_ex(
+        &self,
+        mode: *const VPSS_MODE_S,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(*const VPSS_MODE_S) -> CVI_S32> =
+            self.sys.get(b"CVI_SYS_SetVPSSModeEx")?;
+        Ok(func(mode))
     }
 
     /// Bind a source channel to a destination channel.
@@ -344,6 +402,165 @@ impl CviLibs {
             unsafe extern "C" fn(VI_PIPE, VI_CHN, *const VIDEO_FRAME_INFO_S) -> CVI_S32,
         > = self.vi.get(b"CVI_VI_ReleaseChnFrame")?;
         Ok(func(pipe, chn, frame_info))
+    }
+
+    /// Create a VI pipe with the given attributes.
+    ///
+    /// # Safety
+    ///
+    /// `attr` must point to a valid `VI_PIPE_ATTR_S`.
+    pub unsafe fn cvi_vi_create_pipe(
+        &self,
+        pipe: VI_PIPE,
+        attr: *const VI_PIPE_ATTR_S,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<
+            unsafe extern "C" fn(VI_PIPE, *const VI_PIPE_ATTR_S) -> CVI_S32,
+        > = self.vi.get(b"CVI_VI_CreatePipe")?;
+        Ok(func(pipe, attr))
+    }
+
+    /// Start a VI pipe.
+    ///
+    /// # Safety
+    ///
+    /// The pipe must have been created first.
+    pub unsafe fn cvi_vi_start_pipe(&self, pipe: VI_PIPE) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(VI_PIPE) -> CVI_S32> =
+            self.vi.get(b"CVI_VI_StartPipe")?;
+        Ok(func(pipe))
+    }
+
+    /// Stop a VI pipe.
+    ///
+    /// # Safety
+    ///
+    /// The pipe must have been started first.
+    pub unsafe fn cvi_vi_stop_pipe(&self, pipe: VI_PIPE) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(VI_PIPE) -> CVI_S32> =
+            self.vi.get(b"CVI_VI_StopPipe")?;
+        Ok(func(pipe))
+    }
+
+    /// Destroy a VI pipe.
+    ///
+    /// # Safety
+    ///
+    /// The pipe must have been stopped first.
+    pub unsafe fn cvi_vi_destroy_pipe(&self, pipe: VI_PIPE) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(VI_PIPE) -> CVI_S32> =
+            self.vi.get(b"CVI_VI_DestroyPipe")?;
+        Ok(func(pipe))
+    }
+
+    // ---------------------------------------------------------------
+    // ISP functions (from libisp.so)
+    // ---------------------------------------------------------------
+
+    /// Set ISP public attributes (window, sensor size, frame rate, bayer format).
+    ///
+    /// # Safety
+    ///
+    /// `attr` must point to a valid `ISP_PUB_ATTR_S`.
+    pub unsafe fn cvi_isp_set_pub_attr(
+        &self,
+        pipe: VI_PIPE,
+        attr: *const ISP_PUB_ATTR_S,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<
+            unsafe extern "C" fn(VI_PIPE, *const ISP_PUB_ATTR_S) -> CVI_S32,
+        > = self.isp.get(b"CVI_ISP_SetPubAttr")?;
+        Ok(func(pipe, attr))
+    }
+
+    /// Allocate ISP internal working memory.
+    ///
+    /// # Safety
+    ///
+    /// Must be called after `cvi_isp_set_pub_attr`.
+    pub unsafe fn cvi_isp_mem_init(&self, pipe: VI_PIPE) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(VI_PIPE) -> CVI_S32> =
+            self.isp.get(b"CVI_ISP_MemInit")?;
+        Ok(func(pipe))
+    }
+
+    /// Initialize and probe the sensor, configure MIPI RX.
+    ///
+    /// `sns_cfg` provides initial MIPI lane/I2C config (sensor may patch via callbacks).
+    /// `sns_obj` is a pointer to the sensor driver object (e.g. `stSnsGc2053_Obj`).
+    /// `work_mode` is typically 0 for normal operation.
+    ///
+    /// # Safety
+    ///
+    /// `sns_cfg` must point to a valid `ISP_SNS_CFG_S`.
+    /// `sns_obj` must point to a valid sensor object from `libsns_full.so`.
+    pub unsafe fn cvi_isp_sns_init(
+        &self,
+        pipe: VI_PIPE,
+        sns_cfg: *mut ISP_SNS_CFG_S,
+        sns_obj: *mut CVI_VOID,
+        work_mode: CVI_S32,
+    ) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<
+            unsafe extern "C" fn(VI_PIPE, *mut ISP_SNS_CFG_S, *mut CVI_VOID, CVI_S32) -> CVI_S32,
+        > = self.isp.get(b"CVI_ISP_SnsInit")?;
+        Ok(func(pipe, sns_cfg, sns_obj, work_mode))
+    }
+
+    /// Initialize the ISP firmware.
+    ///
+    /// # Safety
+    ///
+    /// Must be called after `cvi_isp_mem_init` and `cvi_isp_sns_init`.
+    pub unsafe fn cvi_isp_init(&self, pipe: VI_PIPE) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(VI_PIPE) -> CVI_S32> =
+            self.isp.get(b"CVI_ISP_Init")?;
+        Ok(func(pipe))
+    }
+
+    /// Run the ISP processing loop. **This function blocks** until
+    /// `cvi_isp_exit` is called from another thread.
+    ///
+    /// # Safety
+    ///
+    /// Must be called after `cvi_isp_init`, typically in a dedicated thread.
+    pub unsafe fn cvi_isp_run(&self, pipe: VI_PIPE) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(VI_PIPE) -> CVI_S32> =
+            self.isp.get(b"CVI_ISP_Run")?;
+        Ok(func(pipe))
+    }
+
+    /// Stop the ISP processing loop and release resources.
+    /// Signals `cvi_isp_run` to return.
+    ///
+    /// # Safety
+    ///
+    /// Must be called while `cvi_isp_run` is active in another thread.
+    pub unsafe fn cvi_isp_exit(&self, pipe: VI_PIPE) -> Result<CVI_S32, libloading::Error> {
+        let func: libloading::Symbol<unsafe extern "C" fn(VI_PIPE) -> CVI_S32> =
+            self.isp.get(b"CVI_ISP_Exit")?;
+        Ok(func(pipe))
+    }
+
+    // ---------------------------------------------------------------
+    // Sensor symbol lookup (from libsns_full.so)
+    // ---------------------------------------------------------------
+
+    /// Get a pointer to a sensor driver object by symbol name.
+    ///
+    /// Returns a pointer to the global `ISP_SNS_OBJ_S` struct for the
+    /// named sensor (e.g. `b"stSnsGc2053_Obj"`). This is an opaque
+    /// pointer passed to `cvi_isp_sns_init`.
+    ///
+    /// # Safety
+    ///
+    /// The returned pointer is valid for the lifetime of `CviLibs`.
+    pub unsafe fn get_sensor_obj(
+        &self,
+        name: &[u8],
+    ) -> Result<*mut CVI_VOID, libloading::Error> {
+        let sym: libloading::Symbol<*mut CVI_VOID> = self.sns.get(name)?;
+        Ok(*sym)
     }
 
     // ---------------------------------------------------------------
