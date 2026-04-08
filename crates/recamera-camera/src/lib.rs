@@ -18,6 +18,7 @@
 
 use std::mem::MaybeUninit;
 use std::sync::Arc;
+use std::thread::JoinHandle;
 
 use recamera_core::{Error, FrameData, ImageFormat, Resolution, Result};
 use recamera_cvi_sys::CviLibs;
@@ -141,6 +142,7 @@ pub struct Camera {
     config: CameraConfig,
     libs: Arc<CviLibs>,
     streaming: bool,
+    isp_thread: Option<JoinHandle<()>>,
 }
 
 impl std::fmt::Debug for Camera {
@@ -167,8 +169,19 @@ impl Camera {
         let libs = CviLibs::load()
             .map_err(|e| Error::Camera(format!("failed to load CVI libraries: {e}")))?;
 
-        // Initialize VB and SYS
+        // Initialize VB and SYS — match the C++ SDK init sequence exactly.
         unsafe {
+            // 1. Clean up any prior state (prevents hangs after crashes)
+            let _ = libs.cvi_sys_exit();
+            let _ = libs.cvi_vb_exit();
+
+            // 2. Set number of VI devices (C++ does this before VB init)
+            let rc = libs
+                .cvi_vi_set_dev_num(1)
+                .map_err(|e| Error::Camera(format!("VI_SetDevNum symbol: {e}")))?;
+            check_cvi(rc, "CVI_VI_SetDevNum")?;
+
+            // 3. Configure and init VB pools
             let mut vb_config: recamera_cvi_sys::VB_CONFIG_S = std::mem::zeroed();
             vb_config.u32MaxPoolCnt = 1;
             vb_config.astCommPool[0].u32BlkSize =
@@ -189,13 +202,64 @@ impl Camera {
                 .cvi_sys_init()
                 .map_err(|e| Error::Camera(format!("SYS_Init symbol: {e}")))?;
             check_cvi(rc, "CVI_SYS_Init")?;
+
+            // 4. Set VI-VPSS mode: VI_OFFLINE_VPSS_ONLINE (matches C++ default)
+            let mut vi_vpss_mode: recamera_cvi_sys::VI_VPSS_MODE_S = std::mem::zeroed();
+            vi_vpss_mode.aenMode[0] =
+                recamera_cvi_sys::VI_VPSS_MODE_E::VI_OFFLINE_VPSS_ONLINE;
+
+            let rc = libs
+                .cvi_sys_set_vi_vpss_mode(&vi_vpss_mode)
+                .map_err(|e| Error::Camera(format!("SYS_SetVIVPSSMode symbol: {e}")))?;
+            check_cvi(rc, "CVI_SYS_SetVIVPSSMode")?;
+
+            // 5. Set VPSS mode: SINGLE with ISP input (matches C++ default)
+            let mut vpss_mode: recamera_cvi_sys::VPSS_MODE_S = std::mem::zeroed();
+            vpss_mode.enMode = recamera_cvi_sys::VPSS_MODE_E::VPSS_MODE_SINGLE;
+            vpss_mode.aenInput[0] = recamera_cvi_sys::VPSS_INPUT_E::VPSS_INPUT_ISP;
+
+            let rc = libs
+                .cvi_sys_set_vpss_mode_ex(&vpss_mode)
+                .map_err(|e| Error::Camera(format!("SYS_SetVPSSModeEx symbol: {e}")))?;
+            check_cvi(rc, "CVI_SYS_SetVPSSModeEx")?;
         }
 
         Ok(Self {
             config,
             libs: Arc::new(libs),
             streaming: false,
+            isp_thread: None,
         })
+    }
+
+    /// Names of sensor driver objects to probe, in priority order.
+    const SENSOR_OBJS: &[&[u8]] = &[
+        b"stSnsGc2053_Obj\0",
+        b"stSnsOv5647_Obj\0",
+    ];
+
+    /// Try each known sensor object until one probes successfully.
+    unsafe fn probe_sensor(
+        libs: &CviLibs,
+        pipe: i32,
+        sns_cfg: &mut recamera_cvi_sys::ISP_SNS_CFG_S,
+    ) -> Result<*mut recamera_cvi_sys::CVI_VOID> {
+        for name in Self::SENSOR_OBJS {
+            let sns_obj = match unsafe { libs.get_sensor_obj(name) } {
+                Ok(ptr) => ptr,
+                Err(_) => continue,
+            };
+            let rc = unsafe { libs.cvi_isp_sns_init(pipe, sns_cfg, sns_obj, 0) }
+                .map_err(|e| Error::Camera(format!("ISP_SnsInit symbol: {e}")))?;
+            if rc == 0 {
+                let name_str = std::str::from_utf8(&name[..name.len() - 1]).unwrap_or("?");
+                eprintln!("recamera: detected sensor {name_str}");
+                return Ok(sns_obj);
+            }
+        }
+        Err(Error::Camera(
+            "no supported sensor detected (tried GC2053, OV5647)".into(),
+        ))
     }
 
     /// Start the video stream.
@@ -231,6 +295,76 @@ impl Camera {
                 .cvi_vi_enable_dev(0)
                 .map_err(|e| Error::Camera(format!("VI_EnableDev symbol: {e}")))?;
             check_cvi(rc, "CVI_VI_EnableDev")?;
+
+            // -- VI Pipe --
+            let mut vi_pipe_attr: recamera_cvi_sys::VI_PIPE_ATTR_S = std::mem::zeroed();
+            vi_pipe_attr.u32MaxW = w;
+            vi_pipe_attr.u32MaxH = h;
+            vi_pipe_attr.enPixFmt = recamera_cvi_sys::PIXEL_FORMAT_E::PIXEL_FORMAT_NV21;
+
+            let rc = self
+                .libs
+                .cvi_vi_create_pipe(0, &vi_pipe_attr)
+                .map_err(|e| Error::Camera(format!("VI_CreatePipe symbol: {e}")))?;
+            check_cvi(rc, "CVI_VI_CreatePipe")?;
+
+            let rc = self
+                .libs
+                .cvi_vi_start_pipe(0)
+                .map_err(|e| Error::Camera(format!("VI_StartPipe symbol: {e}")))?;
+            check_cvi(rc, "CVI_VI_StartPipe")?;
+
+            // -- ISP --
+            let mut isp_pub_attr: recamera_cvi_sys::ISP_PUB_ATTR_S = std::mem::zeroed();
+            isp_pub_attr.stWndRect.u32Width = w;
+            isp_pub_attr.stWndRect.u32Height = h;
+            isp_pub_attr.stSnsSize.u32Width = w;
+            isp_pub_attr.stSnsSize.u32Height = h;
+            isp_pub_attr.f32FrameRate = self.config.fps as f32;
+            isp_pub_attr.enBayer = recamera_cvi_sys::ISP_BAYER_FORMAT_E::BAYER_FORMAT_BG;
+            isp_pub_attr.enWDRMode = recamera_cvi_sys::WDR_MODE_E::WDR_MODE_NONE;
+            isp_pub_attr.u8SnsMode = 0;
+
+            let rc = self
+                .libs
+                .cvi_isp_set_pub_attr(0, &isp_pub_attr)
+                .map_err(|e| Error::Camera(format!("ISP_SetPubAttr symbol: {e}")))?;
+            check_cvi(rc, "CVI_ISP_SetPubAttr")?;
+
+            let rc = self
+                .libs
+                .cvi_isp_mem_init(0)
+                .map_err(|e| Error::Camera(format!("ISP_MemInit symbol: {e}")))?;
+            check_cvi(rc, "CVI_ISP_MemInit")?;
+
+            // -- Sensor probe (auto-detect) --
+            let mut sns_cfg: recamera_cvi_sys::ISP_SNS_CFG_S = std::mem::zeroed();
+            sns_cfg.stSnsSize.u32Width = w;
+            sns_cfg.stSnsSize.u32Height = h;
+            sns_cfg.f32FrameRate = self.config.fps as f32;
+            sns_cfg.enWDRMode = recamera_cvi_sys::WDR_MODE_E::WDR_MODE_NONE;
+            sns_cfg.S32MipiDevno = 0;
+            sns_cfg.u8Mclk = 0;
+            sns_cfg.bMclkEn = 1; // CVI_TRUE
+            sns_cfg.lane_id = [-1, -1, -1, -1, -1]; // sensor will patch
+            sns_cfg.pn_swap = [0, 0, 0, 0, 0];
+            sns_cfg.busInfo = recamera_cvi_sys::ISP_SNS_COMMBUS_U { s8I2cDev: 0 };
+            sns_cfg.I2cAddr = -1; // sensor default
+
+            Self::probe_sensor(&self.libs, 0, &mut sns_cfg)?;
+
+            // -- ISP Init + Run --
+            let rc = self
+                .libs
+                .cvi_isp_init(0)
+                .map_err(|e| Error::Camera(format!("ISP_Init symbol: {e}")))?;
+            check_cvi(rc, "CVI_ISP_Init")?;
+
+            // CVI_ISP_Run blocks — run in a dedicated thread
+            let isp_libs = Arc::clone(&self.libs);
+            self.isp_thread = Some(std::thread::spawn(move || {
+                let _ = isp_libs.cvi_isp_run(0);
+            }));
 
             let mut vi_chn_attr: recamera_cvi_sys::VI_CHN_ATTR_S = std::mem::zeroed();
             vi_chn_attr.stSize.u32Width = w;
@@ -306,13 +440,32 @@ impl Camera {
             return Ok(());
         }
 
+        unsafe {
+            // 1. Stop ISP first (signals CVI_ISP_Run to return)
+            let _ = self.libs.cvi_isp_exit(0);
+        }
+
+        // 2. Join the ISP thread
+        if let Some(handle) = self.isp_thread.take() {
+            let _ = handle.join();
+        }
+
         let vpss_chn = self.config.channel.vpss_chn();
 
         unsafe {
+            // 3. Tear down VPSS
             let _ = self.libs.cvi_vpss_stop_grp(0);
             let _ = self.libs.cvi_vpss_disable_chn(0, vpss_chn);
             let _ = self.libs.cvi_vpss_destroy_grp(0);
+
+            // 4. Tear down VI channel
             let _ = self.libs.cvi_vi_disable_chn(0, 0);
+
+            // 5. Tear down VI pipe
+            let _ = self.libs.cvi_vi_stop_pipe(0);
+            let _ = self.libs.cvi_vi_destroy_pipe(0);
+
+            // 6. Tear down VI device
             let _ = self.libs.cvi_vi_disable_dev(0);
         }
 
